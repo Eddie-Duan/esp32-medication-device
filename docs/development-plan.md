@@ -354,19 +354,24 @@ TLV61220 是升压芯片，TI 的典型 3.3 V 应用示例为 50 mA 输出，不
 
 Android 可以在 Windows、Linux 或 macOS 上构建；iOS 构建需要 macOS 和 Xcode。因此第一阶段发布 Android APK，同时保留 Flutter 的 iOS 代码和构建说明。
 
-## 13. 目前计划开发顺序
+## 13. 当前状态与重新安排的开发顺序
+
+硬件组已经完成基础 BLE 和数据存储链路的联调：当前 ESP32-C3 Arduino 原型可以通过手机 BLE 调试软件连接，并将 SPIFFS 中的时间记录通过 Notify 发送给手机。因此后续工作不是重新验证基础功能，而是在保留原型成果的基础上完成协议统一、可靠同步和三项创新。
+
+当前原型属于 Prototype v0，最终版本仍需确认芯片型号、开发框架、UUID 和数据格式。原型使用 30 字节文件分片，并在发送完成后清空 SPIFFS；最终版本应改为结构化记录和 `seq + CRC + ACK + COMMIT`。
 
 ```text
-1. 确定数据结构和 BLE 协议。
-2. ESP32 发送假数据。
-3. Flutter App 完成扫描、连接和 Notify 接收。
-4. Flutter App 完成本地 SQLite 保存、去重和 ACK。
-5. Python 电脑端工具验证协议、CRC 和同步异常（可选但推荐）。
-6. 完成断线续传和 Flash 掉电恢复。
-7. 接入微动开关和差压传感器。
-8. 增加图表、提醒和数据导出。
-9. 测试低功耗、电源稳定性和长期运行。
-10. 最后再增加 AI 数据解读。
+1. 保留并记录当前 Prototype v0 的 BLE/SPIFFS 基线。
+2. Flutter App 完成 Mock BLE 和 Prototype v0 兼容接收。
+3. 确认实际芯片、开发框架、UUID 和最终数据格式。
+4. Flutter App 完成本地 SQLite、去重和统计页面。
+5. 固件和 App 统一结构化记录、CRC、`seq`、ACK 和 COMMIT。
+6. 完成断线续传、手机保存失败和 Flash 掉电恢复。
+7. 实现低功耗 PowerManager 和真实电流测试。
+8. 实现 SelfTestEngine、HealthStatus 和记录置信度。
+9. 实现 BLE 配对、数据保护和隐私边界说明。
+10. 接入 AI Mock，再增加 SQLite + RAG 的可解释问答。
+11. 最后再考虑小智语音、Wi-Fi 和精确药量研究。
 ```
 
 最终验收目标是：

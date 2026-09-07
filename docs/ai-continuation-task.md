@@ -35,9 +35,9 @@ AI 网关：RAG 知识库和大模型适配器
 ### 已完成或已验证
 
 - 已确定 ESP32 作为 BLE Peripheral/GATT Server，手机作为 Central/GATT Client。
-- BLE 基础协议和数据存储方案已经完成过联调。
-- 已确定记录先写入 ESP32 Flash，手机保存成功后再发送 ACK。
-- 已确定使用 `seq + CRC + ACK + COMMIT` 处理断线、重复包和掉电。
+- 硬件组已经使用手机 BLE 调试软件验证了基础 BLE 广播、连接、Notify 信息传送。
+- 硬件组已经验证了记录写入 SPIFFS、读取文件并通过 BLE 发送的基础数据存储链路。
+- `seq + CRC + ACK + COMMIT` 是最终可靠同步的目标方案，目前硬件原型还没有完整实现。
 - 已建立 GitHub Public 仓库和开源目录结构。
 - Flutter 手机 App 初始工程已建立。
 - Flutter App 已有 `AssistantService`、`AssistantProvider`、`AssistantContext` 和 `MockAssistantProvider`。
@@ -48,7 +48,7 @@ AI 网关：RAG 知识库和大模型适配器
 
 - Flutter 手机端真实 BLE 扫描、连接和 Notify/Write 代码。
 - Flutter SQLite 数据库和真实同步服务。
-- ESP32 固件目前只有硬件组推送的第一版 Arduino 原型，尚未按最终协议和目录完成整理。
+- ESP32 固件目前已有硬件组推送的第一版 Arduino 原型，基础 BLE 和 SPIFFS 数据传输已经可用，但尚未按最终协议和目录完成工程化整理。
 - `PowerManager`、`SelfTestEngine` 和 `SecurityManager` 尚未实现。
 - RAG 网关尚未实现，目前只有接口说明和预留目录。
 - 小智真实云端/语音链路尚未接入。
@@ -66,28 +66,29 @@ AI 网关：RAG 知识库和大模型适配器
 - 发送完成后会清空 SPIFFS，不能直接作为最终的可靠同步实现；
 - 代码包含 Deep Sleep 相关函数和 GPIO4 唤醒逻辑，但实际低功耗行为仍需真机验证。
 
-而 `protocol/` 中的目标协议是：ESP32-S3、结构化 20 字节记录、`a100～a104` 服务/特征和 `seq + CRC + ACK + COMMIT`。在硬件组确认以下问题前，下一位 AI 不得直接把手机 App 对接到原型代码：
+而 `protocol/` 中的目标协议是：ESP32-S3、结构化 20 字节记录、`a100～a104` 服务/特征和 `seq + CRC + ACK + COMMIT`。下一位 AI 可以先为硬件原型编写临时兼容适配器用于演示，但必须把它标记为 Prototype v0，不能把它当作最终可靠协议：
 
 1. 实际采购和使用的芯片到底是 ESP32-C3 还是 ESP32-S3；
 2. 最终使用 ESP-IDF 还是 Arduino；
 3. 最终 UUID 和数据包格式是什么；
 4. 是否采用逐条 ACK/COMMIT，而不是发送后直接清空文件。
 
-建议保留当前原型作为 `prototype`，完成协议统一后再整理为 `firmware/esp32-xxx/` 正式工程。
+建议保留当前原型作为 `prototype-v0`，在不破坏基础 BLE/存储功能的前提下，完成协议统一后再整理为 `firmware/esp32-xxx/` 正式工程。
 
 ## 3. 当前主开发路线
 
 手机端主路线使用 Flutter/Dart，不使用 Python 作为手机 App 主程序。
 
 ```text
-ESP-IDF + C/C++       ESP32-S3 固件
+Arduino C++            当前 ESP32-C3 硬件原型
+ESP-IDF + C/C++       最终固件路线，芯片待确认
 Flutter + Dart         手机 App
 SQLite                 手机本地数据
 Python + Bleak         可选的电脑端 BLE 调试工具
 FastAPI/其他后端       可选的 RAG 网关
 ```
 
-第一阶段先实现“手机文字助手 + Mock 模式”，再实现真实 BLE 和 SQLite，最后接入 RAG。没有网络和没有硬件时，App 仍应能通过 Mock 模式运行。
+开发顺序调整为：先保留并验证当前硬件原型，再统一最终协议；同时手机 App 先用 Mock 模式开发，之后增加 Prototype v0 兼容适配器，最后接入最终 BLE 协议、SQLite、三项创新和 RAG。没有网络和没有硬件时，App 仍应能通过 Mock 模式运行。
 
 ## 4. 必须遵守的协议规则
 
@@ -131,32 +132,31 @@ ESP32 持久化确认位置并发送下一条
 
 ## 5. 后续开发阶段
 
-### 阶段 A：无硬件也能运行的 App 基础功能
+### 阶段 A：保留成果并完成原型兼容接入
 
 优先完成以下工作：
 
-1. 在 `mobile_app/lib/ble/` 建立 BLE 接口抽象。
+1. 在 `mobile_app/lib/ble/` 建立 BLE 接口抽象，页面不能直接调用 BLE 插件。
 2. 建立 `MockBleTransport`，能够回放 `samples/demo-records.json`。
-3. 实现 BLE 数据包解析、CRC 校验和协议错误处理。
-4. 在 `mobile_app/lib/database/` 实现 SQLite 表、插入、去重和 `ack_seq`。
-5. 在 `mobile_app/lib/services/` 实现同步状态机。
-6. 将 BLE、数据库和页面分层，页面不能直接调用 BLE 插件。
-7. 完成设备列表、同步进度、记录列表和统计页面。
-8. 保留现有 AI 助手 Mock 模式，并将真实记录统计传入 `AssistantContext`。
-9. 增加协议解析、CRC、去重和 Mock 同步测试。
+3. 建立 `PrototypeV0BleTransport`，支持当前原型的实际 UUID、Notify 和 30 字节分片。
+4. 能够在 App 中显示当前原型传来的时间文本或原始分片，并明确标记为 Prototype v0。
+5. 完成设备列表、连接状态和基础数据接收页面。
+6. 保留现有 AI 助手 Mock 模式，并将模拟或真实统计摘要传入 `AssistantContext`。
+7. 增加 Mock BLE、原型分片重组和协议异常测试。
 
-阶段 A 完成后，即使没有 ESP32，开发者也可以运行 App、加载模拟数据、查看历史记录并询问 Mock 助手。
+阶段 A 完成后，开发者可以在没有硬件时运行 Mock 模式，也可以使用实际硬件原型完成基础 BLE 演示。Prototype v0 的数据删除行为不应被描述为可靠同步。
 
-### 阶段 B：接入真实 ESP32
+### 阶段 B：统一最终协议并接入 SQLite
 
-硬件到货后完成：
+在保留 Prototype v0 可演示的基础上完成：
 
-1. 接入真实 BLE 扫描、连接、服务发现和 Notify。
-2. 实现 Android BLE 权限和连接错误提示。
-3. 实现 Write With Response 的 `SYNC_REQ`、`ACK`、`COMMIT` 和 `SET_TIME`。
-4. 测试真实记录、断线续传、重复包和手机保存失败。
-5. 将已经调通的 ESP-IDF 固件放入 `firmware/esp32-s3/`。
-6. 补充 ESP-IDF 版本、分区表、`sdkconfig.defaults` 和烧录说明。
+1. 由硬件组确认实际芯片是 ESP32-C3 还是 ESP32-S3，以及最终使用 Arduino 还是 ESP-IDF。
+2. 冻结最终 UUID、记录格式、字节序、CRC 和错误码。
+3. 在 `mobile_app/lib/database/` 实现 SQLite 表、插入、去重和 `ack_seq`。
+4. 在 `mobile_app/lib/services/` 实现 `SYNC_REQ`、逐条 `ACK`、`SYNC_END` 和 `COMMIT`。
+5. 固件只有在收到 ACK/COMMIT 后才能回收记录，删除当前“发送完成后直接 `SPIFFS.format()`”逻辑。
+6. 测试真实记录、断线续传、重复包、CRC 错误、手机保存失败和 ESP32 掉电。
+7. 将最终固件整理到 `firmware/esp32-xxx/`，保留 Prototype v0 代码和说明。
 
 ### 阶段 C：三个核心创新模块
 
@@ -270,6 +270,18 @@ AssistantProvider
 - 返回回答和来源文档；
 - 找不到可靠资料时明确表示“不确定”；
 - 不自动改变药物剂量、不删除记录、不进行疾病诊断。
+
+### 阶段 E：三周 MVP 计划
+
+如果硬件组计划三周完成，建议按以下顺序交付：
+
+| 时间 | 软件组 | 硬件组 | 阶段成果 |
+|---|---|---|---|
+| 第 1 周 | Flutter 页面、Mock BLE、Prototype v0 兼容接收、SQLite 初版 | 保持现有 BLE/SPIFFS 原型可运行，确认芯片型号和 UUID | 手机能显示模拟数据和原型数据 |
+| 第 2 周 | 最终数据模型、CRC、SQLite 去重、ACK/COMMIT 同步 | 将原型数据改为结构化记录，停止无条件清空 SPIFFS | 真实数据断线后可继续同步 |
+| 第 3 周 | 设备状态页、低功耗/自检测/安全状态展示、AI Mock/RAG 演示 | 启用并测量 Deep Sleep，补充电池和传感器状态 | 完成一次低功耗、安全、可解释的端到端演示 |
+
+如果进度落后，保留顺序为：基础 BLE/存储 → ACK/COMMIT → 低功耗 → 自检测 → 数据安全 → RAG。语音小智和精确药量测量最后处理。
 
 ## 6. 推荐代码目录
 
@@ -387,7 +399,8 @@ docs: update RAG bridge contract
 1. 阅读根目录 README、本文件和 `protocol/` 文档。
 2. 检查当前 Git 分支、工作区和最近提交，不覆盖已有改动。
 3. 检查 Flutter、Dart、ESP-IDF 是否已安装。
-4. 优先实现 Mock BLE、协议解析、SQLite 和同步状态机。
-5. 再把同步统计接入现有 `AssistantContext`。
-6. 最后再实现真实 RAG Provider，不要一开始依赖云端 API。
-7. 完成后运行测试并报告：已完成、未完成、需要硬件组提供的接口。
+4. 先实现 Mock BLE 和 Prototype v0 兼容接收，确保不破坏硬件组已经调通的基础 BLE/存储演示。
+5. 与硬件组确认芯片、框架、UUID 和最终数据格式，再实现 SQLite 和 ACK/COMMIT。
+6. 依次加入低功耗、自检测和数据安全模块。
+7. 再把同步统计接入现有 `AssistantContext`，最后实现真实 RAG Provider，不要一开始依赖云端 API。
+8. 完成后运行测试并报告：已完成、未完成、需要硬件组提供的接口，以及 Prototype v0 与最终协议的差异。
