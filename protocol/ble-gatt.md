@@ -15,7 +15,7 @@ ESP32 深度睡眠时不保持 BLE 连接。第一版采用手机打开 App 后�
 
 | 项目 | UUID | 属性 | 用途 |
 |---|---|---|---|
-| Service | `0000a100-0000-1000-8000-00805f9b34fb` | — | 项目 BLE 服务 |
+| Service | `4fafc201-1fb5-459e-8fcc-c5c9c331914b` | — | 项目 BLE 服务 |
 | `DeviceInfo` | `0000a101-0000-1000-8000-00805f9b34fb` | Read | 设备 ID、固件版本、电池电压 |
 | `RecordData` | `0000a102-0000-1000-8000-00805f9b34fb` | Notify | 发送一条记录 |
 | `SyncControl` | `0000a103-0000-1000-8000-00805f9b34fb` | Write With Response | 同步请求、ACK、COMMIT、校时 |
