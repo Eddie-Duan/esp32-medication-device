@@ -48,11 +48,32 @@ AI 网关：RAG 知识库和大模型适配器
 
 - Flutter 手机端真实 BLE 扫描、连接和 Notify/Write 代码。
 - Flutter SQLite 数据库和真实同步服务。
-- ESP32 固件代码尚未完整放入当前仓库。
+- ESP32 固件目前只有硬件组推送的第一版 Arduino 原型，尚未按最终协议和目录完成整理。
 - `PowerManager`、`SelfTestEngine` 和 `SecurityManager` 尚未实现。
 - RAG 网关尚未实现，目前只有接口说明和预留目录。
 - 小智真实云端/语音链路尚未接入。
 - 硬件正在采购，传感器和电源参数需要到货后实测。
+
+### 必须优先解决的硬件代码差异
+
+当前仓库中的硬件组原型位于 `firmware/esp32-c3/main/main.ino`，但项目总体设计和多数文档仍以 ESP32-S3 为目标。该原型目前具有以下特征：
+
+- 使用 Arduino BLE API，而不是 ESP-IDF 工程；
+- 使用自定义 UUID `4fafc201-1fb5-459e-8fcc-c5c9c331914b` 和 `beb5483e-36e1-4688-b7f5-ea07361b26a8`；
+- 以 SPIFFS 中的时间文本文件为数据来源；
+- 按最多 30 字节的文件片段发送 Notify；
+- 当前没有实现设计文档中的 `SYNC_REQ`、逐条 `ACK` 和 `COMMIT`；
+- 发送完成后会清空 SPIFFS，不能直接作为最终的可靠同步实现；
+- 代码包含 Deep Sleep 相关函数和 GPIO4 唤醒逻辑，但实际低功耗行为仍需真机验证。
+
+而 `protocol/` 中的目标协议是：ESP32-S3、结构化 20 字节记录、`a100～a104` 服务/特征和 `seq + CRC + ACK + COMMIT`。在硬件组确认以下问题前，下一位 AI 不得直接把手机 App 对接到原型代码：
+
+1. 实际采购和使用的芯片到底是 ESP32-C3 还是 ESP32-S3；
+2. 最终使用 ESP-IDF 还是 Arduino；
+3. 最终 UUID 和数据包格式是什么；
+4. 是否采用逐条 ACK/COMMIT，而不是发送后直接清空文件。
+
+建议保留当前原型作为 `prototype`，完成协议统一后再整理为 `firmware/esp32-xxx/` 正式工程。
 
 ## 3. 当前主开发路线
 
