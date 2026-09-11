@@ -109,12 +109,12 @@ void setup()
     dataSent = sendAllFiles();
   }
 
-  if (!deviceConnected && deadlineReached(sleepDeadline))
+  if (!deviceConnected )
   {
     deepsleep();
   }
 
-  if (deviceConnected && dataSent && deadlineReached(sleepDeadline))
+  if (deviceConnected && dataSent )
   {
     deepsleep();
   }
