@@ -1,7 +1,7 @@
 #include <../components/ble/ble.ino>
 #include <../components/flash/flash.ino>
 #include <../components/time/time.ino>
-#include <../components/deepsleep/deepsleep.ino>
+#include <../components/lightsleep/lightsleep.ino>
 #include <Arduino.h>
 
 #include <time.h>
@@ -53,7 +53,7 @@ void setup()
     }
   */
   spiff_setup();
-  deepsleep_setup();
+  lightsleep_setup();
   // 保留原程序的手动时间设置。
   setManualTime(2026, 8, 29, 22, 30, 0);
   Serial.println("Time calibrated.");
@@ -93,7 +93,8 @@ void setup()
     if (digitalRead(BUTTON_PIN) == LOW)
     {
       Serial.println("按键按下");
-      while (digitalRead(BUTTON_PIN) == LOW);
+      while (digitalRead(BUTTON_PIN) == LOW)
+        ;
 
       writeFile();
       dataSent = false;
@@ -108,16 +109,16 @@ void setup()
     dataSent = sendAllFiles();
   }
 
-  if (!deviceConnected )
+  if (!deviceConnected)
   {
-    deepsleep();
+    lightsleep();
   }
 
-  if (deviceConnected && dataSent )
+  if (deviceConnected && dataSent)
   {
-    deepsleep();
+    lightsleep();
   }
-  
+
   //  delay(10);
 }
 
