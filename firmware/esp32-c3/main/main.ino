@@ -93,7 +93,8 @@ void setup()
     if (digitalRead(BUTTON_PIN) == LOW)
     {
       Serial.println("按键按下");
-      while (digitalRead(BUTTON_PIN) == LOW);
+      while (digitalRead(BUTTON_PIN) == LOW)
+        ;
 
       writeFile();
       dataSent = false;
@@ -108,16 +109,16 @@ void setup()
     dataSent = sendAllFiles();
   }
 
-  if (!deviceConnected )
+  if (!deviceConnected)
   {
     deepsleep();
   }
 
-  if (deviceConnected && dataSent )
+  if (deviceConnected && dataSent)
   {
     deepsleep();
   }
-  
+
   //  delay(10);
 }
 
