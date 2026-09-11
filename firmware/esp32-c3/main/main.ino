@@ -69,48 +69,36 @@ void setup()
   // sleepDeadline = millis() + BLE_WAIT_TIMEOUT_MS;
   Serial.println("Waiting a client connection...");
   delay(1000);
-  
-  //  delay(10);
-}
-
-void loop()
-{
-  if (!deviceConnected && oldDeviceConnected)
-  {
-    delay(100);
-    startAdvertising();
-    oldDeviceConnected = false;
-    dataSent = false;
-    // sleepDeadline = millis() + BLE_WAIT_TIMEOUT_MS;
-  }
 
   if (deviceConnected && !oldDeviceConnected)
   {
     oldDeviceConnected = true;
     dataSent = false;
-    // sleepDeadline = millis() + BLE_WAIT_TIMEOUT_MS;
   }
 
- 
-    // 中断函数只设置标志，消抖和文件操作放到 loop() 中执行。
-    delay(30);
+  // 中断函数只设置标志，消抖和文件操作放到 loop() 中执行。
+  delay(30);
 
-    if (digitalRead(BUTTON_PIN) == LOW)
-    {
-      Serial.println("按键按下");
-      while (digitalRead(BUTTON_PIN) == LOW)
-        ;
-      keyPressed = false;
-      writeFile();
-      dataSent = false;
-      // sleepDeadline = millis() + BLE_WAIT_TIMEOUT_MS;
-      Serial.println("按键释放");
-    }
-    
- 
+  if (digitalRead(BUTTON_PIN) == LOW)
+  {
+    Serial.println("按键按下");
+    while (digitalRead(BUTTON_PIN) == LOW)
+      ;
+
+    writeFile();
+    dataSent = false;
+    // sleepDeadline = millis() + BLE_WAIT_TIMEOUT_MS;
+    Serial.println("按键释放");
+  }
+  keyPressed = false;
+  if (deviceConnected)
+    sendALLFiles();
 
   if (!deviceConnected)
   {
+    startAdvertising();
+    oldDeviceConnected = false;
+    dataSent = false;
 
     if (millis() - bleStartTime >= BLE_TIMEOUT)
     {
@@ -119,4 +107,9 @@ void loop()
     }
   }
 
+  //  delay(10);
+}
+
+void loop()
+{
 }
