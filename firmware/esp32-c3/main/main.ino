@@ -68,10 +68,7 @@ void setup()
 
   // sleepDeadline = millis() + BLE_WAIT_TIMEOUT_MS;
   Serial.println("Waiting a client connection...");
-}
-
-void loop()
-{
+  delay(10);
   if (!deviceConnected && oldDeviceConnected)
   {
     delay(100);
@@ -110,20 +107,21 @@ void loop()
   if (deviceConnected && !dataSent)
   {
     dataSent = sendAllFiles();
-    // if (dataSent)
-    // sleepDeadline = millis() + SEND_FINISH_DELAY_MS;
   }
-  /*
-    if (!deviceConnected && deadlineReached(sleepDeadline))
-    {
-      enterDeepSleep();
-    }
 
-    if (deviceConnected && dataSent && deadlineReached(sleepDeadline))
-    {
-      enterDeepSleep();
-    }
-  */
-  delay(10);
-  deepsleep();
+  if (!deviceConnected && deadlineReached(sleepDeadline))
+  {
+    deepsleep();
+  }
+
+  if (deviceConnected && dataSent && deadlineReached(sleepDeadline))
+  {
+    deepsleep();
+  }
+  
+  //  delay(10);
+}
+
+void loop()
+{
 }
