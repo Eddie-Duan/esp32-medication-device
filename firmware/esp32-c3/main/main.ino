@@ -69,6 +69,12 @@ void setup()
   // sleepDeadline = millis() + BLE_WAIT_TIMEOUT_MS;
   Serial.println("Waiting a client connection...");
   delay(1000);
+  
+  //  delay(10);
+}
+
+void loop()
+{
   if (!deviceConnected && oldDeviceConnected)
   {
     delay(100);
@@ -85,8 +91,7 @@ void setup()
     // sleepDeadline = millis() + BLE_WAIT_TIMEOUT_MS;
   }
 
-  if (keyPressed)
-  {
+ 
     // 中断函数只设置标志，消抖和文件操作放到 loop() 中执行。
     delay(30);
 
@@ -95,14 +100,14 @@ void setup()
       Serial.println("按键按下");
       while (digitalRead(BUTTON_PIN) == LOW)
         ;
-
+      keyPressed = false;
       writeFile();
       dataSent = false;
       // sleepDeadline = millis() + BLE_WAIT_TIMEOUT_MS;
       Serial.println("按键释放");
     }
-    keyPressed = false;
-  }
+    
+ 
 
   if (!deviceConnected)
   {
@@ -114,9 +119,4 @@ void setup()
     }
   }
 
-  //  delay(10);
-}
-
-void loop()
-{
 }
