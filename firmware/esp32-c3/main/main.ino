@@ -67,6 +67,12 @@ void setup()
   attachInterrupt(digitalPinToInterrupt(BUTTON_PIN), keyISR, FALLING);
 
   // sleepDeadline = millis() + BLE_WAIT_TIMEOUT_MS;
+  
+  //  delay(10);
+}
+
+void loop()
+{
   Serial.println("Waiting a client connection...");
   delay(1000);
   if (!deviceConnected && oldDeviceConnected)
@@ -119,9 +125,4 @@ void setup()
     lightsleep();
   }
 
-  //  delay(10);
-}
-
-void loop()
-{
 }
