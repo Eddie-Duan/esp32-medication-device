@@ -104,19 +104,14 @@ void setup()
     keyPressed = false;
   }
 
-  if (deviceConnected && !dataSent)
-  {
-    dataSent = sendAllFiles();
-  }
-
   if (!deviceConnected)
   {
-    deepsleep();
-  }
 
-  if (deviceConnected && dataSent)
-  {
-    deepsleep();
+    if (millis() - bleStartTime >= BLE_TIMEOUT)
+    {
+
+      goToDeepSleep();
+    }
   }
 
   //  delay(10);

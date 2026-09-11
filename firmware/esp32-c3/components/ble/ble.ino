@@ -22,7 +22,7 @@ bool dataSent = false;
 
 uint8_t packetBuffer[PACKET_SIZE];
 uint32_t packetNumber = 0;
-
+unsigned long bleStartTime = 0;
 /*
  *   为调试提供状态反馈
  */
@@ -39,7 +39,15 @@ class MyServerCallbacks : public BLEServerCallbacks
     void onDisconnect(BLEServer *server) override
     {
         deviceConnected = false;
-        Serial.println("手机已断开");
+
+        Serial.println("手机断开 BLE");
+
+        pServer->getAdvertising()->start();
+
+        // 重新开始超时计时
+        bleStartTime = millis();
+
+        Serial.println("重新开始 BLE 广播");
     }
 };
 
@@ -96,4 +104,5 @@ void ble_setup()
     advertising->setScanResponse(false);
     advertising->setMinPreferred(0x0);
     startAdvertising();
+    bleStartTime = millis();
 }
