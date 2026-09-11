@@ -4,6 +4,17 @@
 /*
  *   向文件系统中写入数据
  */
+
+void spiff_setup()
+{
+    if (!SPIFFS.begin(true))
+    {
+        Serial.println("SPIFFS Mount Failed");
+        return;
+    }
+    Serial.println("SPIFFS Mounted");
+}
+
 bool writeFile()
 {
     time_t now = time(nullptr);

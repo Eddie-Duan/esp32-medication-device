@@ -67,3 +67,33 @@ void startAdvertising()
     BLEDevice::startAdvertising();
     Serial.println("BLE 开始广播");
 }
+
+void ble_setup()
+{
+    BLEDevice::init("ESP32-C3");
+    pServer = BLEDevice::createServer();
+    pServer->setCallbacks(new MyServerCallbacks());
+
+    BLEService *pService = pServer->createService(SERVICE_UUID);
+    pCharacteristic = pService->createCharacteristic(
+        CHARACTERISTIC_UUID,
+        BLECharacteristic::PROPERTY_READ |
+            BLECharacteristic::PROPERTY_WRITE |
+            BLECharacteristic::PROPERTY_NOTIFY |
+            BLECharacteristic::PROPERTY_INDICATE);
+    pCharacteristic->setCallbacks(new MyCharacteristicCallbacks());
+    pCharacteristic->addDescriptor(new BLE2902());
+
+    descriptor_2901 = new BLE2901();
+    descriptor_2901->setDescription("ESP32-C3 data characteristic");
+    descriptor_2901->setAccessPermissions(ESP_GATT_PERM_READ);
+    pCharacteristic->addDescriptor(descriptor_2901);
+
+    pService->start();
+
+    BLEAdvertising *advertising = BLEDevice::getAdvertising();
+    advertising->addServiceUUID(SERVICE_UUID);
+    advertising->setScanResponse(false);
+    advertising->setMinPreferred(0x0);
+    startAdvertising();
+}

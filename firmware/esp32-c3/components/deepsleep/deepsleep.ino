@@ -1,4 +1,5 @@
 #include "esp_sleep.h"
+#define BUTTON_PIN 4
 
 /*
 bool deadlineReached(uint32_t deadline)
@@ -14,3 +15,13 @@ void enterDeepSleep()
   esp_deep_sleep_start();
 }
 */
+void deepsleep_setup()
+{
+  esp_deep_sleep_enable_gpio_wakeup(
+      1ULL << BUTTON_PIN,
+      ESP_GPIO_WAKEUP_GPIO_LOW);
+}
+void deepsleep()
+{
+  esp_deep_sleep_start();
+}

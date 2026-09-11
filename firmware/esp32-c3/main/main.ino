@@ -1,6 +1,7 @@
 #include <../components/ble/ble.ino>
 #include <../components/flash/flash.ino>
 #include <../components/time/time.ino>
+#include <../components/deepsleep/deepsleep.ino>
 #include <Arduino.h>
 
 #include <time.h>
@@ -51,13 +52,8 @@ void setup()
       Serial.println("GPIO4 低电平深睡唤醒已启用");
     }
   */
-  if (!SPIFFS.begin(true))
-  {
-    Serial.println("SPIFFS Mount Failed");
-    return;
-  }
-  Serial.println("SPIFFS Mounted");
-
+  spiff_setup();
+  deepsleep_setup();
   // 保留原程序的手动时间设置。
   setManualTime(2026, 8, 29, 22, 30, 0);
   Serial.println("Time calibrated.");
@@ -66,32 +62,7 @@ void setup()
   // 每次启动或深睡唤醒时创建一条记录。
   writeFile();
 
-  BLEDevice::init("ESP32-C3");
-  pServer = BLEDevice::createServer();
-  pServer->setCallbacks(new MyServerCallbacks());
-
-  BLEService *pService = pServer->createService(SERVICE_UUID);
-  pCharacteristic = pService->createCharacteristic(
-      CHARACTERISTIC_UUID,
-      BLECharacteristic::PROPERTY_READ |
-          BLECharacteristic::PROPERTY_WRITE |
-          BLECharacteristic::PROPERTY_NOTIFY |
-          BLECharacteristic::PROPERTY_INDICATE);
-  pCharacteristic->setCallbacks(new MyCharacteristicCallbacks());
-  pCharacteristic->addDescriptor(new BLE2902());
-
-  descriptor_2901 = new BLE2901();
-  descriptor_2901->setDescription("ESP32-C3 data characteristic");
-  descriptor_2901->setAccessPermissions(ESP_GATT_PERM_READ);
-  pCharacteristic->addDescriptor(descriptor_2901);
-
-  pService->start();
-
-  BLEAdvertising *advertising = BLEDevice::getAdvertising();
-  advertising->addServiceUUID(SERVICE_UUID);
-  advertising->setScanResponse(false);
-  advertising->setMinPreferred(0x0);
-  startAdvertising();
+  ble_setup();
 
   attachInterrupt(digitalPinToInterrupt(BUTTON_PIN), keyISR, FALLING);
 
@@ -154,4 +125,5 @@ void loop()
     }
   */
   delay(10);
+  deepsleep();
 }
