@@ -68,7 +68,7 @@ void setup()
 
   // sleepDeadline = millis() + BLE_WAIT_TIMEOUT_MS;
   Serial.println("Waiting a client connection...");
-  delay(10);
+  delay(1000);
   if (!deviceConnected && oldDeviceConnected)
   {
     delay(100);
@@ -93,8 +93,7 @@ void setup()
     if (digitalRead(BUTTON_PIN) == LOW)
     {
       Serial.println("按键按下");
-      while (digitalRead(BUTTON_PIN) == LOW)
-        delay(1);
+      while (digitalRead(BUTTON_PIN) == LOW);
 
       writeFile();
       dataSent = false;
