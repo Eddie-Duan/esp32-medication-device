@@ -70,6 +70,13 @@ void setup()
   Serial.println("Waiting a client connection...");
   delay(1000);
 
+  
+
+  //  delay(10);
+}
+
+void loop()
+{
   if (deviceConnected && !oldDeviceConnected)
   {
     oldDeviceConnected = true;
@@ -89,10 +96,11 @@ void setup()
     dataSent = false;
     // sleepDeadline = millis() + BLE_WAIT_TIMEOUT_MS;
     Serial.println("按键释放");
+    if (deviceConnected)
+    sendAllFiles();
   }
   keyPressed = false;
-  if (deviceConnected)
-    sendAllFiles();
+  
 
   if (!deviceConnected)
   {
@@ -106,10 +114,4 @@ void setup()
       goToDeepSleep();
     }
   }
-
-  //  delay(10);
-}
-
-void loop()
-{
 }
