@@ -92,7 +92,7 @@ void setup()
   }
   keyPressed = false;
   if (deviceConnected)
-    sendALLFiles();
+    sendAllFiles();
 
   if (!deviceConnected)
   {
