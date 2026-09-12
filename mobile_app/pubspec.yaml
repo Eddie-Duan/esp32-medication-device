@@ -1,20 +1,28 @@
 name: medication_device_app
-description: Open-source Flutter client for the ESP32-S3 medication device.
+description: Android and iOS companion for the ESP32 medication device.
 publish_to: "none"
 version: 0.1.0+1
 
 environment:
-  sdk: ">=3.0.0 <4.0.0"
+  sdk: ">=3.12.0 <4.0.0"
+  flutter: ">=3.44.0"
 
 dependencies:
   flutter:
     sdk: flutter
   flutter_reactive_ble: 5.5.0
+  flutter_localizations:
+    sdk: flutter
+  sqflite: ^2.4.2
+  path: ^1.9.1
+  path_provider: ^2.1.5
+  share_plus: ^10.1.4
 
 dev_dependencies:
   flutter_test:
     sdk: flutter
   flutter_lints: 3.0.0
+  sqflite_common_ffi: ^2.4.3
 
 flutter:
   uses-material-design: true

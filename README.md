@@ -1,6 +1,6 @@
-# ESP32-S3 Medication Device
+# ESP32 Medication Device
 
-一个面向开源复现的 ESP32-S3 智能用药装置原型项目。
+一个面向开源复现的智能用药装置原型项目。当前固件代码是 ESP32-C3 / Arduino；ESP32-S3 / ESP-IDF 是待硬件组确认的演进目标。
 
 本项目采用单仓库管理硬件固件、手机 App、BLE 协议、测试工具和项目文档，目标是让其他开发者能够根据公开代码、协议和硬件资料完成复现。
 
@@ -11,7 +11,7 @@
 ```text
 传感器/按键
     ↓
-ESP32-S3 固件：采集、事件识别、Flash 日志、BLE Server
+ESP32 固件：采集、事件识别、Flash 日志、BLE Server（部分为目标功能）
     ↓ BLE
 Flutter 手机 App：BLE Client、SQLite、历史记录、数据导出
     ↓
@@ -20,8 +20,8 @@ Flutter 手机 App：BLE Client、SQLite、历史记录、数据导出
 
 ## 技术栈
 
-- ESP32-S3：ESP-IDF + C/C++。
-- 手机 App：Flutter + Dart，第一阶段优先支持 Android。
+- 当前固件：ESP32-C3 + Arduino；S3 / ESP-IDF 尚需迁移工程。
+- 手机 App：Flutter + Dart，Android / iOS 共用业务代码；本轮完成 Android 构建，iOS 待 Mac / 真机验证。
 - BLE：手机作为 Central/GATT Client，ESP32 作为 Peripheral/GATT Server。
 - 本地数据：SQLite。
 - 辅助工具：Python + Bleak，可选，不是手机 App 的运行依赖。
@@ -31,7 +31,7 @@ Flutter 手机 App：BLE Client、SQLite、历史记录、数据导出
 | 目录 | 内容 |
 |---|---|
 | `protocol/` | BLE UUID、数据包、CRC、ACK 和错误码 |
-| `firmware/` | ESP32-S3 的 ESP-IDF 固件 |
+| `firmware/` | 当前 C3 Arduino 原型；部分说明仍描述 S3 / ESP-IDF 目标 |
 | `mobile_app/` | Flutter 手机 App |
 | `tools/python/` | 电脑端 BLE 调试和数据分析工具 |
 | `server/assistant-gateway/` | 第二阶段预留的 AI 网关说明 |
@@ -59,16 +59,7 @@ cd esp32-medication-device
 
 ### 3. 编译 ESP32 固件
 
-安装与项目文档一致的 ESP-IDF 版本后：
-
-```bash
-cd firmware/esp32-s3
-idf.py set-target esp32s3
-idf.py build
-idf.py -p PORT flash monitor
-```
-
-当前仓库首先提供工程目录和接口文档；硬件组应将已经调通的 ESP-IDF 工程代码放入此目录。
+当前代码入口是 `firmware/esp32-c3/main/main.ino`，各模块是 Arduino `.ino` 文件。请硬件组提供已验证的 Arduino 工程组织方式、开发板配置和烧录参数；仓库目前没有可直接执行 `idf.py build` 的 S3 工程。正式 20 字节协议也不能视为已经在现有文本 Notify 原型中实现。
 
 ### 4.运行 Flutter App
 
@@ -80,7 +71,7 @@ flutter pub get
 flutter run
 ```
 
-首次运行前，请按照 `mobile_app/README.md` 配置 Android BLE 权限。iOS 构建需要 macOS 和 Xcode。
+演示步骤、已验证工具版本和构建命令见 [`mobile_app/README.md`](mobile_app/README.md)。成员 B 的接入契约见 [`docs/member-a-handoff.md`](docs/member-a-handoff.md)。iOS 构建需要 macOS 和 Xcode。
 
 ### 5. 运行 Python 辅助工具
 
@@ -105,9 +96,11 @@ pip install -r requirements.txt
 
 ## 当前状态
 
-- BLE 协议和数据存储：已完成基础联调。
-- 硬件：采购中。
-- Flutter 手机 App：已加入第一阶段 AI 助手 Mock 框架，BLE 页面待硬件联调。
+- Flutter 成员 A：SQLite、去重、演示数据、历史 / 统计、日期筛选、CSV、数据库摘要接入 Mock 助手已实现。
+- 平台：补齐 Android / iOS 工程与权限声明；Android debug APK 构建通过，iOS 尚未编译或真机验证。
+- 自动化：19 项测试通过、`flutter analyze` 无问题；另生成 3 张桌面渲染的演示界面预览，非手机实拍。
+- BLE：原型有文本 Notify；本 App 的扫描 / 连接、正式协议校验、ACK / COMMIT 尚待成员 B 与硬件组接入，不能以此前调试软件的联调代替本 App 验证。
+- 硬件：板型、交付版本和整机联调进度由硬件组确认。
 - Python 工具：作为可选调试工具保留。
 
 ## 许可证

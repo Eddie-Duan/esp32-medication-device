@@ -8,15 +8,13 @@ class AssistantPage extends StatefulWidget {
   const AssistantPage({
     super.key,
     this.service,
-    this.assistantContext = const AssistantContext(
-      todayCount: 2,
-      last7DaysCount: 12,
-      invalidEventCount: 1,
-    ),
+    this.assistantContext = const AssistantContext(),
+    this.contextLoader,
   });
 
   final AssistantService? service;
   final AssistantContext assistantContext;
+  final Future<AssistantContext> Function()? contextLoader;
 
   @override
   State<AssistantPage> createState() => _AssistantPageState();
@@ -28,17 +26,20 @@ class _AssistantPageState extends State<AssistantPage> {
   late final ScrollController _scrollController;
   late final List<ChatMessage> _messages;
   bool _sending = false;
+  late AssistantContext _context;
 
   @override
   void initState() {
     super.initState();
     _service = widget.service ?? AssistantService();
+    _context = widget.assistantContext;
     _inputController = TextEditingController();
     _scrollController = ScrollController();
     _messages = [
       ChatMessage(
         role: ChatRole.assistant,
-        text: '你好，我是用药记录助手。目前运行在 Mock 模式，可以回答记录统计问题。',
+        text:
+            '你好，我可以解释${_context.isDemo ? '演示数据' : '本地设备记录'}的统计。当前使用本地规则回答，不联网。记录的动作次数不代表确认服药。',
         createdAt: DateTime.now(),
       ),
     ];
@@ -67,9 +68,13 @@ class _AssistantPageState extends State<AssistantPage> {
     _scrollToBottom();
 
     try {
+      final latestContext =
+          await widget.contextLoader?.call() ?? widget.assistantContext;
+      if (!mounted) return;
+      setState(() => _context = latestContext);
       final answer = await _service.ask(
         question: question,
-        context: widget.assistantContext,
+        context: latestContext,
       );
       if (!mounted) return;
       setState(() => _messages.add(answer));
@@ -83,9 +88,10 @@ class _AssistantPageState extends State<AssistantPage> {
         ));
       });
     } finally {
-      if (!mounted) return;
-      setState(() => _sending = false);
-      _scrollToBottom();
+      if (mounted) {
+        setState(() => _sending = false);
+        _scrollToBottom();
+      }
     }
   }
 
@@ -105,13 +111,13 @@ class _AssistantPageState extends State<AssistantPage> {
     return Scaffold(
       appBar: AppBar(
         title: const Text('用药记录助手'),
-        actions: [
+        actions: const [
           Padding(
-            padding: const EdgeInsets.only(right: 12),
+            padding: EdgeInsets.only(right: 12),
             child: Center(
               child: Chip(
-                label: const Text('Mock'),
-                avatar: const Icon(Icons.science_outlined, size: 16),
+                label: Text('Mock'),
+                avatar: Icon(Icons.science_outlined, size: 16),
                 visualDensity: VisualDensity.compact,
               ),
             ),
@@ -137,7 +143,7 @@ class _AssistantPageState extends State<AssistantPage> {
   }
 
   Widget _buildSummaryCard() {
-    final data = widget.assistantContext;
+    final data = _context;
     return Card(
       margin: const EdgeInsets.fromLTRB(16, 12, 16, 8),
       child: Padding(
@@ -145,9 +151,10 @@ class _AssistantPageState extends State<AssistantPage> {
         child: Row(
           mainAxisAlignment: MainAxisAlignment.spaceAround,
           children: [
-            _summaryItem('今日', '${data.todayCount} 次'),
+            _summaryItem(
+                data.isDemo ? '今日 · 演示' : '今日', '${data.todayCount} 次'),
             _summaryItem('近 7 天', '${data.last7DaysCount} 次'),
-            _summaryItem('疑似无效', '${data.invalidEventCount} 条'),
+            _summaryItem('近 7 天疑似无效', '${data.invalidEventCount} 条'),
           ],
         ),
       ),
