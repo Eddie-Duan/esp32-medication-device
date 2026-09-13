@@ -1,69 +1,52 @@
+#include <Arduino.h>
 #include <BLEDevice.h>
 #include <BLEServer.h>
 #include <BLEUtils.h>
 #include <BLE2902.h>
-#include <BLE2901.h>
+#include <freertos/FreeRTOS.h>
+#include <freertos/queue.h>
 
-#define PACKET_SIZE 30
-#define BLE_WAIT_TIMEOUT_MS 30000UL
-#define SEND_FINISH_DELAY_MS 1000UL
-
+#define PACKET_SIZE 20
 #define SERVICE_UUID "4fafc201-1fb5-459e-8fcc-c5c9c331914b"
 #define CHARACTERISTIC_UUID "beb5483e-36e1-4688-b7f5-ea07361b26a8"
 
 BLEServer *pServer = nullptr;
 BLECharacteristic *pCharacteristic = nullptr;
-BLE2901 *descriptor_2901 = nullptr;
-
+BLE2902 *notifyDescriptor = nullptr;
 volatile bool deviceConnected = false;
 volatile bool keyPressed = false;
-bool oldDeviceConnected = false;
-bool dataSent = false;
+volatile uint32_t connectionGeneration = 0;
+volatile bool advertisePending = false;
+struct ControlCommand { char text[21]; uint32_t generation; };
+QueueHandle_t commandQueue = nullptr;
 
-uint8_t packetBuffer[PACKET_SIZE];
-uint32_t packetNumber = 0;
-
-/*
- *   为调试提供状态反馈
- */
-
-class MyServerCallbacks : public BLEServerCallbacks
-{
-    void onConnect(BLEServer *server) override
-    {
-        deviceConnected = true;
-        dataSent = false;
-        Serial.println("手机已连接");
-    }
-
-    void onDisconnect(BLEServer *server) override
-    {
-        deviceConnected = false;
-        Serial.println("手机已断开");
-    }
+class MyServerCallbacks : public BLEServerCallbacks {
+  void onConnect(BLEServer *) override {
+    ++connectionGeneration;
+    if (notifyDescriptor) notifyDescriptor->setNotifications(false);
+    deviceConnected = true;
+    Serial.println("CONNECTED: waiting for HELLO and Notify subscription");
+  }
+  void onDisconnect(BLEServer *) override {
+    deviceConnected = false;
+    ++connectionGeneration;
+    advertisePending = true;
+    Serial.println("DISCONNECTED: files retained");
+  }
 };
-
-/*
- *   接受手机端的数据，并通过串口传递进行调试
- */
-class MyCharacteristicCallbacks : public BLECharacteristicCallbacks
-{
-    void onWrite(BLECharacteristic *characteristic) override
-    {
-        String rxValue = characteristic->getValue();
-        if (rxValue.length() > 0)
-        {
-            Serial.print("手机发送的数据: ");
-            Serial.println(rxValue);
-        }
-    }
+class MyCharacteristicCallbacks : public BLECharacteristicCallbacks {
+  void onWrite(BLECharacteristic *characteristic) override {
+    const auto value = characteristic->getValue();
+    if (value.length() == 0 || value.length() > 20 || !deviceConnected) return;
+    ControlCommand command = {};
+    memcpy(command.text, value.c_str(), value.length());
+    command.generation = connectionGeneration;
+    // BLE callbacks never touch SPIFFS or wait for a database/network response.
+    if (xQueueSend(commandQueue, &command, 0) != pdTRUE)
+      Serial.println("CONTROL_QUEUE_FULL: client can retry");
+  }
 };
-
-/*
- *   开始广播
- */
-void startAdvertising()
-{
-    BLEDevice::startAdvertising();
-    Serial.println("BLE 开始广播");
+void startAdvertising() {
+  BLEDevice::startAdvertising();
+  Serial.println("BLE advertising");
 }

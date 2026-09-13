@@ -292,7 +292,7 @@ class _HomePageState extends State<HomePage> with WidgetsBindingObserver {
                 style: Theme.of(context).textTheme.bodySmall),
             const SizedBox(height: 20)
           ],
-          if (data.source == RecordSource.device)
+          if (widget.connectionBuilder != null || data.source == RecordSource.device)
             widget.connectionBuilder?.call(context, data.deviceRepository) ??
                 Card(
                     child: Padding(

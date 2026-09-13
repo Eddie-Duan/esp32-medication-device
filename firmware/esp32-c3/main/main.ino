@@ -1,157 +1,62 @@
-#include <../components/ble/ble.ino>
-#include <../components/flash/flash.ino>
-#include <../components/time/time.ino>
 #include <Arduino.h>
+#include "../components/ble/ble.ino"
+#include "../components/flash/flash.ino"
+#include "../components/time/time.ino"
 
-#include <time.h>
-#include <sys/time.h>
-
-// ESP32-C3 的 RTC GPIO 为 GPIO0~GPIO5，这里使用 GPIO4 进行深睡唤醒。
-// 按键接线：GPIO4 -- 按键 -- GND。
+// ESP32-C3 GPIO4 -- button -- GND. Sleep stays disabled during foreground sync.
 #define BUTTON_PIN 4
-/*
-extern BLEServer *pServer = nullptr;
-extern BLECharacteristic *pCharacteristic = nullptr;
-extern BLE2901 *descriptor_2901 = nullptr;
+void IRAM_ATTR keyISR() { keyPressed = true; }
 
-extern volatile bool deviceConnected = false;
-extern volatile bool keyPressed = false;
-extern bool oldDeviceConnected = false;
-extern bool dataSent = false;
-
-extern uint8_t packetBuffer[PACKET_SIZE];
-extern uint32_t packetNumber = 0;
-// uint32_t sleepDeadline = 0;
-*/
-void IRAM_ATTR keyISR()
-{
-  keyPressed = true;
-}
-
-void setup()
-{
+void setup() {
   Serial.begin(115200);
   delay(500);
-
-  Serial.println();
-  Serial.println("ESP32-C3 启动");
-
   pinMode(BUTTON_PIN, INPUT_PULLUP);
-  /*
-    // 单个 GPIO4 低电平唤醒。GPIO4 是 ESP32-C3 的 RTC GPIO。
-    gpio_wakeup_enable((gpio_num_t)BUTTON_PIN, GPIO_INTR_LOW_LEVEL);
-  esp_err_t wakeupResult = esp_sleep_enable_gpio_wakeup();
-    if (wakeupResult != ESP_OK)
-    {
-      Serial.print("深睡唤醒配置失败，错误码: ");
-      Serial.println(wakeupResult);
-    }
-    else
-    {
-      Serial.println("GPIO4 低电平深睡唤醒已启用");
-    }
-  */
-  if (!SPIFFS.begin(true))
-  {
-    Serial.println("SPIFFS Mount Failed");
-    return;
-  }
-  Serial.println("SPIFFS Mounted");
-
-  // 保留原程序的手动时间设置。
+  // A mount error must never erase recordings. A factory-blank board may need
+  // a one-time filesystem initialization by the hardware team before testing.
+  storageReady = SPIFFS.begin(false);
+  counterReady = fileCounter.begin("proto-files", false);
+  Serial.println(storageReady ? "SPIFFS mounted" : "SPIFFS unavailable; no auto-format");
+  // Existing hardware time stub retained; raw timestamps are not validated UTC.
   setManualTime(2026, 8, 29, 22, 30, 0);
-  Serial.println("Time calibrated.");
-  printTime();
-
-  // 每次启动或深睡唤醒时创建一条记录。
   writeFile();
-
+  char identity[13];
+  const uint64_t chipId = ESP.getEfuseMac();
+  snprintf(identity, sizeof(identity), "%04X%08X", (uint16_t)(chipId >> 32), (uint32_t)chipId);
+  stableDeviceId = identity;
+  commandQueue = xQueueCreate(12, sizeof(ControlCommand));
+  if (!commandQueue) { Serial.println("CONTROL_QUEUE_ALLOCATION_FAILED"); return; }
   BLEDevice::init("ESP32-C3");
   pServer = BLEDevice::createServer();
   pServer->setCallbacks(new MyServerCallbacks());
-
-  BLEService *pService = pServer->createService(SERVICE_UUID);
-  pCharacteristic = pService->createCharacteristic(
-      CHARACTERISTIC_UUID,
-      BLECharacteristic::PROPERTY_READ |
-          BLECharacteristic::PROPERTY_WRITE |
-          BLECharacteristic::PROPERTY_NOTIFY |
-          BLECharacteristic::PROPERTY_INDICATE);
+  BLEService *service = pServer->createService(SERVICE_UUID);
+  pCharacteristic = service->createCharacteristic(CHARACTERISTIC_UUID,
+    BLECharacteristic::PROPERTY_READ | BLECharacteristic::PROPERTY_WRITE | BLECharacteristic::PROPERTY_NOTIFY);
   pCharacteristic->setCallbacks(new MyCharacteristicCallbacks());
-  pCharacteristic->addDescriptor(new BLE2902());
-
-  descriptor_2901 = new BLE2901();
-  descriptor_2901->setDescription("ESP32-C3 data characteristic");
-  descriptor_2901->setAccessPermissions(ESP_GATT_PERM_READ);
-  pCharacteristic->addDescriptor(descriptor_2901);
-
-  pService->start();
-
+  notifyDescriptor = new BLE2902();
+  pCharacteristic->addDescriptor(notifyDescriptor);
+  service->start();
   BLEAdvertising *advertising = BLEDevice::getAdvertising();
   advertising->addServiceUUID(SERVICE_UUID);
   advertising->setScanResponse(false);
-  advertising->setMinPreferred(0x0);
   startAdvertising();
-
   attachInterrupt(digitalPinToInterrupt(BUTTON_PIN), keyISR, FALLING);
-
-  // sleepDeadline = millis() + BLE_WAIT_TIMEOUT_MS;
-  Serial.println("Waiting a client connection...");
 }
-
-void loop()
-{
-  if (!deviceConnected && oldDeviceConnected)
-  {
-    delay(100);
+void loop() {
+  if (!commandQueue) { delay(100); return; }
+  if (!deviceConnected && advertisePending) {
+    advertisePending = false;
     startAdvertising();
-    oldDeviceConnected = false;
-    dataSent = false;
-    // sleepDeadline = millis() + BLE_WAIT_TIMEOUT_MS;
   }
-
-  if (deviceConnected && !oldDeviceConnected)
-  {
-    oldDeviceConnected = true;
-    dataSent = false;
-    // sleepDeadline = millis() + BLE_WAIT_TIMEOUT_MS;
-  }
-
-  if (keyPressed)
-  {
-    // 中断函数只设置标志，消抖和文件操作放到 loop() 中执行。
-    delay(30);
-
-    if (digitalRead(BUTTON_PIN) == LOW)
-    {
-      Serial.println("按键按下");
-      while (digitalRead(BUTTON_PIN) == LOW)
-        delay(1);
-
-      writeFile();
-      dataSent = false;
-      // sleepDeadline = millis() + BLE_WAIT_TIMEOUT_MS;
-      Serial.println("按键释放");
-    }
+  serviceSync();
+  // Do not block for a held button: ACKs and BLE callbacks must keep progressing.
+  static uint32_t lastButtonAt = 0;
+  if (keyPressed) {
     keyPressed = false;
-  }
-
-  if (deviceConnected && !dataSent)
-  {
-    dataSent = sendAllFiles();
-    // if (dataSent)
-    // sleepDeadline = millis() + SEND_FINISH_DELAY_MS;
-  }
-  /*
-    if (!deviceConnected && deadlineReached(sleepDeadline))
-    {
-      enterDeepSleep();
+    if (millis() - lastButtonAt > 250 && digitalRead(BUTTON_PIN) == LOW) {
+      lastButtonAt = millis();
+      writeFile();
+      Serial.println("Press Re-sync in app to fetch new files");
     }
-
-    if (deviceConnected && dataSent && deadlineReached(sleepDeadline))
-    {
-      enterDeepSleep();
-    }
-  */
+  }
   delay(10);
 }

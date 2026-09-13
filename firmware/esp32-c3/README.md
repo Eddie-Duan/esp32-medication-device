@@ -1,11 +1,21 @@
-# ESP32-S3 ESP-IDF 工程
+# ESP32-C3 Arduino 原型固件
 
-建议的代码模块：
+本目录当前是 ESP32-C3 + Arduino-ESP32 原型。入口 `main/main.ino`，GPIO4 按钮接 GND，串口 115200。
 
-- `main/`：启动、状态机和任务调度。
-- `components/ble/`：GATT 服务、Notify、ACK 和同步状态。
-- `components/storage/`：Flash 日志、CRC 和掉电恢复。
-- `components/sensor/`：按键、微动开关和差压传感器。
-- `components/power/`：电池检测、低电量和电源状态。
+- `components/ble/`：单特征 GATT、CCCD、控制命令队列。
+- `components/flash/`：SPIFFS 时间文本、持久文件编号、CRC、逐条 ACK、同步重试。
+- `components/time/`：原有手动时钟占位，尚未实现 App 校时。
 
-代码必须遵守 [`protocol/`](../../protocol/) 中的协议定义。
+配套 App 0.2.0。当前协议见 [Prototype v0.1](../../protocol/prototype-text-v01.md)，实际操作见 [A+B 联调](../../docs/member-ab-integration.md)。正式事件四特征协议尚未在本固件实现。
+
+从仓库根目录构建：
+
+```powershell
+arduino-cli core update-index --additional-urls https://espressif.github.io/arduino-esp32/package_esp32_index.json
+arduino-cli core install esp32:esp32@3.3.11 --additional-urls https://espressif.github.io/arduino-esp32/package_esp32_index.json
+arduino-cli compile --fqbn esp32:esp32:esp32c3 firmware/esp32-c3/main
+```
+
+本次不自动刷板。由硬件组确认板型、端口、原分区设置，再上传。不要启用整片擦除；固件也不会在挂载失败或发送结束时自动格式化 SPIFFS。
+
+原型 COMMIT 只确认手机保存完成，仍保留设备文件供联调复查。最多同步 256 个文件，超过上限显示错误；正式回收、分页、低功耗和传感器事件协议后续继续实现。

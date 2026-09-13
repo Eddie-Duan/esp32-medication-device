@@ -1,7 +1,7 @@
 name: medication_device_app
 description: Android and iOS companion for the ESP32 medication device.
 publish_to: "none"
-version: 0.1.0+1
+version: 0.2.0+2
 
 environment:
   sdk: ">=3.12.0 <4.0.0"
@@ -11,6 +11,8 @@ dependencies:
   flutter:
     sdk: flutter
   flutter_reactive_ble: 5.5.0
+  permission_handler: ^12.0.1
+  shared_preferences: ^2.5.3
   flutter_localizations:
     sdk: flutter
   sqflite: ^2.4.2

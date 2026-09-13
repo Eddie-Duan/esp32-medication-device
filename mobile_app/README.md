@@ -1,6 +1,6 @@
-# 用药装置 App · 成员 A 交接
+# 用药装置 App · A+B 合并版
 
-Flutter 共用 Android / iOS 代码。当前可以不接硬件演示本地记录、统计、筛选、CSV 和文字助手；BLE 扫描与同步由成员 B 接入。首页的“设备记录”为空是正常状态。
+Flutter 共用 Android / iOS 代码。A 的本地记录、统计、筛选、CSV 和文字助手已与 B 的 BLE 扫描/连接合并。打开概览“设备连接”可接收并持久保存配套 ESP32-C3 固件的原型时间文本。安装与联调见 [A+B 交接](../docs/member-ab-integration.md)。
 
 ## 已实现与待接入
 
@@ -10,7 +10,8 @@ Flutter 共用 Android / iOS 代码。当前可以不接硬件演示本地记录
 | A1 数据与页面 | SQLite 持久化；设备 ID + 序号去重；记录详情、今日 / 7 日统计、演示入口 |
 | A4 筛选与助手 | 本地日期筛选；CSV 分享当前列表；Mock 助手每次提问重新读取数据库摘要 |
 | A3 保存接口 | 事务保存、完全相同的重复包识别、冲突拒绝、连续同步位置持久化 |
-| B 待完成 | 扫描 / 连接 / Notify；原型文本页；正式包校验、ACK、续传和 COMMIT |
+| B 原型已实现 | 扫描 / 连接 / Notify、权限、订阅握手、CRC 分片校验、原型 SQLite、ACK/COMMIT、重试和去重 |
+| 正式协议待完成 | 正式事件解码入 A 库、正式游标续传、校时、按确认范围回收设备文件 |
 | A5 待联调 | Android / iPhone 真机运行、分享面板、权限异常和整机断线 / 掉电验收 |
 
 ## 无硬件体验
@@ -51,7 +52,7 @@ database/    RecordRepository、SQLite、去重和同步位置
 services/    演示数据、页面数据控制器、CSV
 pages/       概览 / 历史 / 记录详情；预留连接卡片
 assistant/   AssistantContext、Mock Provider、助手页面
-ble/         留给 B 的扫描、连接和协议实现
+ble/         B 的扫描/连接、原型协议、文本 SQLite 与联调页面
 ```
 
 B 请先阅读 [接口与联调说明](../docs/member-a-handoff.md)。`MedicationDeviceApp(connectionBuilder: ...)` 的回调始终提供设备数据库，即使用户正在查看演示数据。

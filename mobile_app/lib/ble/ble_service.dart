@@ -1,0 +1,566 @@
+import 'dart:async';
+import 'dart:convert';
+import 'dart:math';
+import 'package:flutter/foundation.dart';
+import 'package:flutter_reactive_ble/flutter_reactive_ble.dart';
+import 'package:shared_preferences/shared_preferences.dart';
+import 'ble_transport.dart';
+import 'prototype_protocol.dart';
+import 'prototype_store.dart';
+import 'prototype_sync.dart';
+
+class BleDeviceInfo {
+  const BleDeviceInfo({
+    required this.id,
+    required this.name,
+    required this.rssi,
+  });
+  final String id;
+  final String name;
+  final int rssi;
+}
+
+enum BleConnectionStatus {
+  disconnected,
+  scanning,
+  connecting,
+  subscribing,
+  ready,
+  syncing,
+  complete,
+  error,
+}
+
+/// B's scan/reconnect flow with durable text sync. Owned above navigation, so
+/// browsing A's history does not cancel Bluetooth or switch its storage target.
+class BleService extends ChangeNotifier {
+  BleService({
+    BleTransport? transport,
+    PrototypeStore? store,
+    this.usePreferences = true,
+    this.handshakeInterval = const Duration(seconds: 1),
+    this.reconnectDelay = const Duration(seconds: 2),
+  }) : _transportOverride = transport,
+       _store = store; // ignore: prefer_initializing_formals
+  factory BleService.test() => BleService(usePreferences: false);
+  final BleTransport? _transportOverride;
+  BleTransport? _defaultTransport;
+  BleTransport get _transport =>
+      _transportOverride ?? (_defaultTransport ??= ReactiveBleTransport());
+  PrototypeStore? _store;
+  Future<PrototypeStore>? _openingStore;
+  Future<PrototypeStore> _getStore() => _store != null
+      ? Future.value(_store!)
+      : (_openingStore ??= SqlitePrototypeStore.open()
+            .then((store) {
+              _store = store;
+              return store;
+            })
+            .catchError((Object error) {
+              _openingStore = null;
+              throw error;
+            }));
+  final bool usePreferences;
+  final Duration handshakeInterval;
+  final Duration reconnectDelay;
+  static const maxReconnectAttempts = 3;
+  static const serviceUuid = prototypeServiceUuid;
+  static const notifyCharacteristicUuid = prototypeCharacteristicUuid;
+  BleConnectionStatus status = BleConnectionStatus.disconnected;
+  final List<BleDeviceInfo> _devices = [];
+  final List<String> _logs = [];
+  final List<String> _rawLines = [];
+  List<PrototypeRecord> savedRecords = [];
+  List<BleDeviceInfo> get devices => List.unmodifiable(_devices);
+  List<String> get logs => List.unmodifiable(_logs);
+  List<String> get rawLines => List.unmodifiable(_rawLines);
+  String? connectedDeviceId;
+  String? _lastDeviceId;
+  String? stableDeviceId;
+  bool autoReconnectEnabled = true;
+  bool autoScanEnabled = false;
+  bool _suppressed = false;
+  bool _disposed = false;
+  bool _initialized = false;
+  bool _linkConnected = false;
+  int _epoch = 0;
+  int _scanEpoch = 0;
+  int _retryCount = 0;
+  int receivedBytes = 0;
+  String lastHex = '';
+  String? lastError;
+  int syncedCount = 0;
+  int _commitRetries = 0;
+  PrototypeSync? _sync;
+  bool get hasConnection => connectedDeviceId != null;
+  bool get canSync =>
+      _linkConnected &&
+      stableDeviceId != null &&
+      _sync == null &&
+      status != BleConnectionStatus.syncing;
+  String get statusLabel => switch (status) {
+    BleConnectionStatus.disconnected => '未连接',
+    BleConnectionStatus.scanning => '扫描中',
+    BleConnectionStatus.connecting => '连接中',
+    BleConnectionStatus.subscribing => '已连接，等待订阅握手',
+    BleConnectionStatus.ready => '订阅已确认',
+    BleConnectionStatus.syncing => '正在接收并保存',
+    BleConnectionStatus.complete => '原型文本已保存',
+    BleConnectionStatus.error => '需要处理',
+  };
+  StreamSubscription<DiscoveredDevice>? _scan;
+  StreamSubscription<ConnectionStateUpdate>? _connection;
+  StreamSubscription<List<int>>? _notify;
+  Timer? _reconnectTimer;
+  Timer? _scanTimer;
+  Timer? _handshakeTimer;
+  Timer? _syncTimer;
+  DateTime? _lastScanStopped;
+  final _buffer = PrototypeLineBuffer();
+  Future<void> _incoming = Future.value();
+  Future<void> _outgoing = Future.value();
+
+  bool _active(int epoch) => !_disposed && epoch == _epoch;
+  void _changed() {
+    if (!_disposed) notifyListeners();
+  }
+
+  void _log(String message) {
+    if (_disposed) return;
+    _logs.add('${DateTime.now().toIso8601String().substring(11, 19)} $message');
+    if (_logs.length > 80) _logs.removeAt(0);
+    _changed();
+  }
+
+  void _state(BleConnectionStatus value) {
+    status = value;
+    _changed();
+  }
+
+  void _fail(Object error) {
+    if (_disposed) return;
+    _handshakeTimer?.cancel();
+    _syncTimer?.cancel();
+    _sync = null;
+    lastError = '$error';
+    _log('$error');
+    _state(BleConnectionStatus.error);
+  }
+
+  Future<void> initializeAutoScan() async {
+    if (_initialized || _disposed) return;
+    _initialized = true;
+    try {
+      if (usePreferences) {
+        final prefs = await SharedPreferences.getInstance();
+        if (_disposed) return;
+        _lastDeviceId = prefs.getString('ble.last_device_id');
+        autoScanEnabled = prefs.getBool('ble.auto_scan_enabled') ?? false;
+      }
+      if (usePreferences || _store != null) {
+        await _getStore();
+        if (_disposed) {
+          return;
+        }
+        savedRecords = await _store!.readRecent();
+      }
+      _changed();
+      if (autoScanEnabled && !_suppressed && !_disposed) await startScan();
+    } catch (error) {
+      _fail(error);
+    }
+  }
+
+  void setAutoReconnect(bool value) {
+    autoReconnectEnabled = value;
+    if (!value) _reconnectTimer?.cancel();
+    _changed();
+  }
+
+  Future<void> setAutoScan(bool value) async {
+    autoScanEnabled = value;
+    _changed();
+    try {
+      if (usePreferences) {
+        final prefs = await SharedPreferences.getInstance();
+        await prefs.setBool('ble.auto_scan_enabled', value);
+      }
+      if (_disposed) return;
+      if (value && !hasConnection) {
+        await startScan();
+      } else if (!value) {
+        await cancelScan();
+      }
+    } catch (error) {
+      _fail(error);
+    }
+  }
+
+  Future<void> _stopScan() async {
+    _scanEpoch++;
+    _scanTimer?.cancel();
+    final subscription = _scan;
+    _scan = null;
+    if (subscription != null) {
+      await subscription.cancel();
+      _lastScanStopped = DateTime.now();
+    }
+  }
+
+  Future<void> startScan() async {
+    if (_disposed || hasConnection || status == BleConnectionStatus.scanning) {
+      return;
+    }
+    _suppressed = false;
+    _reconnectTimer?.cancel();
+    await _stopScan();
+    final scanEpoch = _scanEpoch;
+    _state(BleConnectionStatus.scanning);
+    lastError = null;
+    try {
+      await _transport.ensureReady();
+      if (_lastScanStopped != null) {
+        final remaining =
+            const Duration(seconds: 2) -
+            DateTime.now().difference(_lastScanStopped!);
+        if (remaining > Duration.zero) await Future<void>.delayed(remaining);
+      }
+      if (_disposed || _suppressed || scanEpoch != _scanEpoch) return;
+      _devices.clear();
+      _scan = _transport.scan().listen(
+        (device) {
+          if (_disposed || scanEpoch != _scanEpoch) return;
+          final info = BleDeviceInfo(
+            id: device.id,
+            name: device.name.isEmpty ? 'ESP32 设备' : device.name,
+            rssi: device.rssi,
+          );
+          final index = _devices.indexWhere((d) => d.id == info.id);
+          if (index < 0) {
+            _devices.add(info);
+          } else {
+            _devices[index] = info;
+          }
+          _changed();
+          if (autoScanEnabled && device.id == _lastDeviceId && !hasConnection) {
+            unawaited(connectToDevice(device.id));
+          }
+        },
+        onError: (Object error) {
+          if (scanEpoch != _scanEpoch || _disposed) return;
+          unawaited(_stopScan());
+          _fail(error);
+        },
+      );
+      _scanTimer = Timer(const Duration(seconds: 15), () {
+        if (scanEpoch == _scanEpoch && !_disposed) unawaited(cancelScan());
+      });
+    } catch (error) {
+      if (scanEpoch == _scanEpoch) _fail(error);
+    }
+  }
+
+  Future<void> cancelScan() async {
+    _suppressed = true;
+    _reconnectTimer?.cancel();
+    await _stopScan();
+    if (!hasConnection) _state(BleConnectionStatus.disconnected);
+  }
+
+  Future<void> connectToDevice(
+    String deviceId, {
+    bool resetRetryCount = true,
+  }) async {
+    if (_disposed) return;
+    _suppressed = false;
+    _reconnectTimer?.cancel();
+    final epoch = ++_epoch;
+    if (resetRetryCount) _retryCount = 0;
+    connectedDeviceId = deviceId;
+    stableDeviceId = null;
+    lastError = null;
+    _state(BleConnectionStatus.connecting);
+    try {
+      await _stopScan();
+      await _clearLink();
+      if (!_active(epoch)) return;
+      await _transport.ensureReady();
+      if (!_active(epoch)) return;
+      _connection = _transport
+          .connect(deviceId)
+          .listen(
+            (update) {
+              if (!_active(epoch)) return;
+              switch (update.connectionState) {
+                case DeviceConnectionState.connected:
+                  if (!_linkConnected) {
+                    _linkConnected = true;
+                    unawaited(_subscribe(deviceId, epoch));
+                  }
+                case DeviceConnectionState.disconnected:
+                  unawaited(_linkLost(deviceId, epoch, update.failure));
+                case DeviceConnectionState.connecting:
+                  _state(BleConnectionStatus.connecting);
+                case DeviceConnectionState.disconnecting:
+                  break;
+              }
+            },
+            onError: (Object error) {
+              unawaited(_linkLost(deviceId, epoch, error));
+            },
+          );
+    } catch (error) {
+      await _linkLost(deviceId, epoch, error);
+    }
+  }
+
+  Future<void> _subscribe(String deviceId, int epoch) async {
+    try {
+      _state(BleConnectionStatus.subscribing);
+      await _transport.discover(deviceId);
+      if (!_active(epoch)) return;
+      _log('服务发现完成，建立 Notify；等待设备 READY 确认');
+      _notify = _transport
+          .subscribe(deviceId)
+          .listen(
+            (bytes) {
+              if (!_active(epoch)) return;
+              receivedBytes += bytes.length;
+              lastHex = bytes
+                  .map((b) => b.toRadixString(16).padLeft(2, '0'))
+                  .join(' ');
+              for (final line in _buffer.add(bytes)) {
+                _incoming = _incoming
+                    .then((_) async {
+                      if (_active(epoch)) await _receive(line, epoch);
+                    })
+                    .catchError((Object error) {
+                      if (_active(epoch)) _fail(error);
+                    });
+              }
+              _changed();
+            },
+            onError: (Object error) {
+              if (_active(epoch)) _fail(error);
+            },
+          );
+      var attempts = 0;
+      Future<void> hello() async {
+        if (!_active(epoch) ||
+            stableDeviceId != null ||
+            status != BleConnectionStatus.subscribing) {
+          return;
+        }
+        if (++attempts > 6) {
+          _fail('设备没有回复 READY。请刷入本次配套固件；旧固件文本仅显示在下方。');
+          return;
+        }
+        try {
+          await _write('HELLO', epoch);
+          if (_active(epoch) &&
+              stableDeviceId == null &&
+              status == BleConnectionStatus.subscribing) {
+            _handshakeTimer = Timer(
+              handshakeInterval,
+              () => unawaited(hello()),
+            );
+          }
+        } catch (error) {
+          if (_active(epoch)) _fail(error);
+        }
+      }
+
+      await hello();
+    } catch (error) {
+      if (_active(epoch)) _fail(error);
+    }
+  }
+
+  Future<void> _write(String command, int epoch, {bool Function()? guard}) {
+    final bytes = utf8.encode(command);
+    if (bytes.length > 20) throw ArgumentError('控制命令超过 20 字节');
+    final pending = _outgoing.then((_) async {
+      if (!_active(epoch) || !_linkConnected) throw StateError('连接已改变，取消旧命令');
+      if (guard != null && !guard()) return;
+      await _transport.write(connectedDeviceId!, bytes);
+      if (_active(epoch)) _log('发送 $command');
+    });
+    _outgoing = pending.catchError((Object _) {});
+    return pending;
+  }
+
+  Future<void> _receive(String line, int epoch) async {
+    _rawLines.add(line);
+    if (_rawLines.length > 40) _rawLines.removeAt(0);
+    List<String> fields;
+    try {
+      fields = decodePrototypeFrame(line);
+    } on FormatException catch (error) {
+      _log(error.message);
+      return;
+    }
+    if (fields[0] == 'READY') {
+      if (status != BleConnectionStatus.subscribing) return;
+      if (fields.length != 3 ||
+          fields[2] != 'P01' ||
+          !RegExp(r'^[0-9A-Fa-f]{12}$').hasMatch(fields[1])) {
+        throw const FormatException('设备 READY 格式或协议版本不匹配');
+      }
+      if (stableDeviceId != null) return;
+      _handshakeTimer?.cancel();
+      stableDeviceId = fields[1].toUpperCase();
+      _lastDeviceId = connectedDeviceId;
+      _state(BleConnectionStatus.ready);
+      _log('收到 READY：通知链路已确认，设备 $stableDeviceId');
+      if (usePreferences) {
+        final prefs = await SharedPreferences.getInstance();
+        if (!_active(epoch)) return;
+        await prefs.setString('ble.last_device_id', _lastDeviceId!);
+      }
+      if (_active(epoch)) await requestSync();
+      return;
+    }
+    final sync = _sync;
+    if (sync == null || fields.length < 2 || fields[1] != sync.token) return;
+    await sync.accept(fields);
+    if (!_active(epoch) || !identical(_sync, sync)) return;
+    syncedCount = sync.savedCount;
+    if (sync.completed) {
+      _syncTimer?.cancel();
+      savedRecords = await _store!.readRecent();
+      if (!_active(epoch)) return;
+      _sync = null;
+      _retryCount = 0;
+      _state(BleConnectionStatus.complete);
+      _log('本轮 $syncedCount 条原型文本已保存；设备文件保留，可重复同步');
+    } else {
+      _armSyncTimeout(epoch);
+      _changed();
+    }
+  }
+
+  Future<void> requestSync() async {
+    if (_disposed || !canSync) return;
+    final epoch = _epoch;
+    _state(BleConnectionStatus.syncing);
+    lastError = null;
+    syncedCount = 0;
+    _commitRetries = 0;
+    try {
+      await _getStore();
+      if (!_active(epoch)) return;
+      final random = Random.secure();
+      final token = List.generate(
+        4,
+        (_) => random.nextInt(256),
+      ).map((b) => b.toRadixString(16).padLeft(2, '0')).join();
+      late final PrototypeSync sync;
+      sync = PrototypeSync(
+        deviceId: stableDeviceId!,
+        token: token,
+        store: _store!,
+        write: (command) async {
+          if (identical(_sync, sync)) {
+            await _write(command, epoch, guard: () => identical(_sync, sync));
+          }
+        },
+        isActive: () => _active(epoch) && identical(_sync, sync),
+      );
+      _sync = sync;
+      await _write('SYNC_REQ|$token', epoch);
+      if (_active(epoch)) _armSyncTimeout(epoch);
+    } catch (error) {
+      if (_active(epoch)) _fail(error);
+    }
+  }
+
+  void _armSyncTimeout(int epoch) {
+    _syncTimer?.cancel();
+    final committing = _sync?.endReceived == true;
+    _syncTimer = Timer(Duration(seconds: committing ? 2 : 12), () async {
+      if (!_active(epoch)) return;
+      if (_sync?.endReceived == true && _commitRetries++ < 3) {
+        try {
+          await _write('COMMIT|${_sync!.token}', epoch);
+          if (_active(epoch) && _sync != null) _armSyncTimeout(epoch);
+        } catch (error) {
+          if (_active(epoch)) _fail(error);
+        }
+      } else {
+        _fail('同步超时，已保存的数据仍保留；请点击“重新同步”');
+      }
+    });
+  }
+
+  Future<void> _linkLost(String deviceId, int epoch, Object? error) async {
+    if (!_active(epoch)) return;
+    final lostEpoch = ++_epoch;
+    connectedDeviceId = null;
+    stableDeviceId = null;
+    await _clearLink();
+    if (!_active(lostEpoch)) return;
+    if (error != null) {
+      _fail(error);
+    } else {
+      _state(BleConnectionStatus.disconnected);
+    }
+    _log('连接中断；未完成的记录不会获确认');
+    if (autoReconnectEnabled &&
+        !_suppressed &&
+        _retryCount < maxReconnectAttempts) {
+      _retryCount++;
+      _log(
+        '将在 ${reconnectDelay.inSeconds} 秒后重连（$_retryCount/$maxReconnectAttempts）',
+      );
+      _reconnectTimer = Timer(reconnectDelay, () {
+        if (_active(lostEpoch) && !_suppressed && autoReconnectEnabled) {
+          unawaited(connectToDevice(deviceId, resetRetryCount: false));
+        }
+      });
+    }
+  }
+
+  Future<void> _clearLink() async {
+    _handshakeTimer?.cancel();
+    _syncTimer?.cancel();
+    _linkConnected = false;
+    _sync = null;
+    _buffer.reset();
+    final notify = _notify;
+    final connection = _connection;
+    _notify = null;
+    _connection = null;
+    await notify?.cancel();
+    await connection?.cancel();
+  }
+
+  Future<void> disconnect() async {
+    _suppressed = true;
+    ++_epoch;
+    _reconnectTimer?.cancel();
+    await _stopScan();
+    await _clearLink();
+    connectedDeviceId = null;
+    stableDeviceId = null;
+    _state(BleConnectionStatus.disconnected);
+  }
+
+  Future<void> _close() async {
+    await disconnect();
+    await _incoming;
+    await _outgoing;
+    try {
+      await _openingStore;
+    } catch (_) {
+      /* Opening failed: no handle to close. */
+    }
+    await _store?.close();
+  }
+
+  @override
+  void dispose() {
+    _disposed = true;
+    unawaited(_close());
+    super.dispose();
+  }
+}

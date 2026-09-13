@@ -1,5 +1,7 @@
 # BLE GATT 接口
 
+> 下文为正式事件协议设计。当前 A+B App 0.2.0 与 ESP32-C3 Arduino 固件使用 [Prototype v0.1 时间文本协议](prototype-text-v01.md)，不要把两者的控制指令混用。
+
 ## 角色
 
 ```text
