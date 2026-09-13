@@ -1,26 +1,43 @@
+import 'dart:async';
+
 import 'package:flutter/material.dart';
 
 import 'assistant/assistant_page.dart';
+import 'ble/ble_service.dart';
+import 'ble/ble_status_page.dart';
 
 void main() {
-  runApp(const MedicationDeviceApp());
+  WidgetsFlutterBinding.ensureInitialized();
+  final bleService = BleService();
+  runApp(MedicationDeviceApp(bleService: bleService));
+  unawaited(bleService.initializeAutoScan());
 }
 
 class MedicationDeviceApp extends StatelessWidget {
-  const MedicationDeviceApp({super.key});
+  const MedicationDeviceApp({
+    super.key,
+    required this.bleService,
+  });
+
+  final BleService bleService;
 
   @override
   Widget build(BuildContext context) {
     return MaterialApp(
       title: 'ESP32 Medication Device',
       theme: ThemeData(colorSchemeSeed: Colors.teal, useMaterial3: true),
-      home: const HomePage(),
+      home: HomePage(bleService: bleService),
     );
   }
 }
 
 class HomePage extends StatelessWidget {
-  const HomePage({super.key});
+  const HomePage({
+    super.key,
+    required this.bleService,
+  });
+
+  final BleService bleService;
 
   @override
   Widget build(BuildContext context) {
@@ -36,8 +53,10 @@ class HomePage extends StatelessWidget {
             const SizedBox(height: 8),
             OutlinedButton.icon(
               onPressed: () {
-                ScaffoldMessenger.of(context).showSnackBar(
-                  const SnackBar(content: Text('BLE 扫描模块待接入硬件联调。')),
+                Navigator.of(context).push(
+                  MaterialPageRoute<void>(
+                    builder: (_) => BleStatusPage(service: bleService),
+                  ),
                 );
               },
               icon: const Icon(Icons.bluetooth_searching),
