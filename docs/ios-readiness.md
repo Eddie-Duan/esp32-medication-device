@@ -2,7 +2,9 @@
 
 本轮基于 A+B 合并版开发，分支 `codex/ios-readiness`，目标 iOS 15+。Android 与 iOS 共用 Flutter 的页面、SQLite、协议、CSV 和助手代码，不另写一套 App。
 
-2026-09-16 验证：代码提交 `aec99ae` 在 Windows 和云端 macOS 上均通过静态检查与 **50 项测试**；云端模拟器编译、未签名 iPhone 编译、模拟器安装和启动截图步骤全部通过。[查看本次完整构建记录](https://github.com/zyc-ivsd/esp32-medication-device/actions/runs/35088984210)。这不是 iPhone 蓝牙实测或签名分发结果。
+2026-09-17 验证：共用 Dart 逻辑在 Windows 通过静态检查与 **50 项测试**；最终代码 `bdf8fe1` 在云端 macOS 再次通过分析、50 项测试、模拟器编译及未签名 iPhone 编译。模拟器成功打开首页，截图识别到“设备记录”和“历史记录”，并已人工查看。[查看最终构建记录](https://github.com/zyc-ivsd/esp32-medication-device/actions/runs/35122743488)。这不是 iPhone 蓝牙实测或签名分发结果。
+
+启动检查已由“启动后固定等待 8 秒截图”改为等待页面实际出现，保留运行日志，并在始终未出现首页时失败。此前有一次命令成功但截图为空白，故不能只依据启动命令返回值判断界面可用。
 
 ## 本轮改动
 

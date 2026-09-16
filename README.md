@@ -21,7 +21,7 @@ Flutter 手机 App：BLE Client、SQLite、历史记录、数据导出
 ## 技术栈
 
 - 当前固件：ESP32-C3 + Arduino；S3 / ESP-IDF 尚需迁移工程。
-- 手机 App：Flutter + Dart，Android / iOS 共用业务代码；本轮完成 Android 构建，iOS 待 Mac / 真机验证。
+- 手机 App：Flutter + Dart，Android / iOS 共用业务代码；Android APK、iOS 云端双架构构建和模拟器首页验证通过，两端真实手机联调待完成。见 [iOS 交接](docs/ios-readiness.md)。
 - BLE：手机作为 Central/GATT Client，ESP32 作为 Peripheral/GATT Server。
 - 本地数据：SQLite。
 - 辅助工具：Python + Bleak，可选，不是手机 App 的运行依赖。
