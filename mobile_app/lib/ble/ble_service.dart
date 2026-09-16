@@ -568,6 +568,7 @@ class BleService extends ChangeNotifier {
   /// Foreground-only BLE on both mobile platforms. Ignore `inactive` (permission
   /// dialogs / Control Center); pause only on the application's `paused` event.
   Future<void> setForeground(bool value) {
+    Future<void> restoration = Future.value();
     _lifecycle = _lifecycle
         .then((_) async {
           if (_disposed || _foreground == value) return;
@@ -583,9 +584,9 @@ class BleService extends ChangeNotifier {
             _resumeDeviceId = null;
             _resumeScan = false;
             if (device != null && autoReconnectEnabled) {
-              await connectToDevice(device);
+              restoration = connectToDevice(device);
             } else if (scan) {
-              await startScan();
+              restoration = startScan();
             }
           }
           _changed();
@@ -593,7 +594,9 @@ class BleService extends ChangeNotifier {
         .catchError((Object error) {
           _fail(error);
         });
-    return _lifecycle;
+    // Permission prompts can remain open. A later pause must be able to cancel
+    // this restoration without waiting for the prompt or scan cooldown.
+    return _lifecycle.then((_) => restoration);
   }
 
   Future<void> _close() async {

@@ -42,7 +42,7 @@ Android 安装包位于 `build/app/outputs/flutter-apk/app-debug.apk`，用于�
 
 蓝牙插件 `flutter_reactive_ble 5.5.0` 的 Android 库仍固定 compileSdk 33，本项目在 `android/build.gradle.kts` 中将该子项目调整为 36，避免 AndroidX 编译错误；无需修改本机 pub 缓存。上游问题见 [#911](https://github.com/PhilipsHue/flutter_reactive_ble/issues/911)。构建仍可能出现旧 Kotlin 插件兼容提示，后续升级 Flutter 前检查 [上游迁移进度](https://github.com/PhilipsHue/flutter_reactive_ble/issues/934)。
 
-Android 工程当前最低 API 24（Android 7.0）。iOS 工程目标为 iOS 15+。在 Mac 安装相同 Flutter、Xcode 和需要的插件构建工具后执行 `flutter pub get`、`flutter build ios --simulator`；真机需在 Xcode 选择开发团队、配置签名，再执行 `flutter run -d DEVICE_ID`。Windows 无法验证 iOS 构建；当前没有 IPA、TestFlight 或 iPhone 验收结果。
+Android 工程当前最低 API 24（Android 7.0）。iOS 工程目标为 iOS 15+；权限、前后台恢复和 iPhone/iPad 布局已补充自动化测试。Windows 可开发共用代码，原生构建交给新增的 GitHub macOS 工作流，具体结果以对应提交的 Actions 为准。没有可直接安装的签名 IPA、TestFlight 或 iPhone 验收结果。操作与分工见 [iOS 开发交接](../docs/ios-readiness.md)。
 
 ## 接入位置
 

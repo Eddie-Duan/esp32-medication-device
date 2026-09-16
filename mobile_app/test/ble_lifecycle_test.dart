@@ -25,6 +25,22 @@ void main() {
     await transport.close();
   });
   test(
+    'a second pause cancels foreground restoration while permission is pending',
+    () async {
+      await service.connectToDevice('phone-link');
+      await service.setForeground(false);
+      transport.readiness = Completer<void>();
+      final resume = service.setForeground(true);
+      await until(() => service.foreground && service.hasConnection);
+      await service.setForeground(false).timeout(const Duration(seconds: 1));
+      expect(service.foreground, false);
+      transport.readiness!.complete();
+      await resume;
+      expect(transport.connections, 1);
+      expect(service.hasConnection, false);
+    },
+  );
+  test(
     'background cancels HELLO, releases link, ignores late data, foreground reconnects once',
     () async {
       await service.connectToDevice('phone-link');
@@ -88,7 +104,8 @@ void main() {
         service.setForeground(false),
         service.setForeground(true),
       ]);
-      expect(transport.connections, 3);
+      // Intermediate restoration is cancelled before opening a native link.
+      expect(transport.connections, 2);
       expect(service.foreground, true);
     },
   );
