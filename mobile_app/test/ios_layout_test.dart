@@ -1,4 +1,3 @@
-import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:medication_device_app/ble/ble_service.dart';
@@ -45,7 +44,7 @@ void main() {
         expect(bounds.right, lessThanOrEqualTo(size.width - 44));
         expect(tester.takeException(), isNull);
       },
-      variant: TargetPlatformVariant({TargetPlatform.iOS}),
+      variant: const TargetPlatformVariant({TargetPlatform.iOS}),
     );
   }
   testWidgets(
@@ -94,6 +93,6 @@ void main() {
       );
       expect(tester.takeException(), isNull);
     },
-    variant: TargetPlatformVariant({TargetPlatform.iOS}),
+    variant: const TargetPlatformVariant({TargetPlatform.iOS}),
   );
 }
