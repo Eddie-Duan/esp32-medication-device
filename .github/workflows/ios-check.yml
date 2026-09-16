@@ -47,7 +47,6 @@ jobs:
           mkdir -p build/ios-validation
           flutter --version | tee build/ios-validation/flutter-version.txt
           xcodebuild -version | tee build/ios-validation/xcode-version.txt
-          pod --version
           flutter config --no-analytics
           flutter precache --ios
           flutter pub get --enforce-lockfile
@@ -78,11 +77,22 @@ jobs:
           xcrun simctl launch "$simulator" "$bundle_id" | tee build/ios-validation/simulator-launch.txt
           sleep 8
           xcrun simctl io "$simulator" screenshot build/ios-validation/simulator-startup.png
-      - name: Upload build logs and successful app bundles
+      - name: Upload build logs and startup screenshot
         if: always()
         uses: actions/upload-artifact@v4
         with:
           name: ios-validation-${{ github.sha }}
-          path: mobile_app/build/ios-validation/
+          path: |
+            mobile_app/build/ios-validation/*.txt
+            mobile_app/build/ios-validation/*.json
+            mobile_app/build/ios-validation/*.png
+          retention-days: 7
+          if-no-files-found: warn
+      - name: Upload successful app bundles
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: ios-app-bundles-${{ github.sha }}
+          path: mobile_app/build/ios-validation/*.zip
           retention-days: 7
           if-no-files-found: warn

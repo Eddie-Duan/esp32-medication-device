@@ -11,7 +11,7 @@
 | 蓝牙权限 | iOS 等待 CoreBluetooth 授权；不调用 Android 权限及 SDK 查询；拒绝后可打开应用设置 | iPhone 首次允许、拒绝后再允许、蓝牙关闭 |
 | 前后台 | 进入后台暂停扫描和连接，保留已存数据；返回前台按自动重连开关恢复；手动断开不恢复 | 锁屏、切应用、接电话、同步中切后台 |
 | 页面和分享 | BLE 页避开刘海和底部手势区域；iPhone 横竖屏、大字和 iPad 分享锚点测试 | 系统分享面板、真实 CSV 内容、最大字体 |
-| 原生依赖 | 补齐 Podfile 和 xcconfig，兼容 Flutter 的 SPM 与 CocoaPods 混合依赖 | 云端 Xcode 构建及真机运行 |
+| 原生依赖 | 使用 Swift Package Manager；根据云端日志移除多余的 CocoaPods 配置 | 云端 Xcode 构建及真机运行 |
 | 云端验证 | GitHub macOS：分析、测试、模拟器编译、未签名真机编译、模拟器启动截图 | 查看对应提交的 Actions 结果；不能用代码提交替代构建成功 |
 
 当前采用**前台同步**。返回 App 后重新握手、重新请求原型快照，数据库去重；不是后台持续接收，也不是正式协议的游标续传。不要为此直接添加后台蓝牙声明：后台任务、状态恢复和耗电需要独立开发与实测。
@@ -20,8 +20,8 @@
 
 1. 切换到 `codex/ios-readiness`，进入 `mobile_app`。使用 Flutter 3.47.4 / Dart 3.13.3。
 2. 每次改完执行 `flutter pub get --enforce-lockfile`、`flutter analyze`、`flutter test`。
-3. 推送此分支的 App 改动，GitHub 自动启动 [iOS build check](https://github.com/zyc-ivsd/esp32-medication-device/actions/workflows/ios-check.yml)。选择对应提交检查每步结果，下载 `ios-validation-提交哈希`，产物保留 7 天。
-4. 成功运行会包含编译日志、模拟器 `.app` 压缩包、未签名 iPhone `.app` 压缩包和启动截图。这两种包都不能直接发给 iPhone 用户安装；截图只说明模拟器启动状态。
+3. 推送此分支的 App 改动，GitHub 自动启动 [iOS build check](https://github.com/zyc-ivsd/esp32-medication-device/actions/workflows/ios-check.yml)。选择对应提交检查每步结果。`ios-validation-提交哈希` 是体积较小的日志和启动截图，`ios-app-bundles-提交哈希` 是构建包，产物均保留 7 天。
+4. 成功运行会包含模拟器 `.app` 压缩包和未签名 iPhone `.app` 压缩包。这两种包都不能直接发给 iPhone 用户安装；截图只说明模拟器启动状态。
 
 标准 macOS 执行器用于本公开仓库的自动化构建，无须先准备 Apple 签名密钥。工作流当前监控此开发分支及 PR；以后改分支或合入 main 时，应相应调整 push 分支范围。
 
@@ -36,7 +36,7 @@
 
 ## 拿到 Mac 和 iPhone 后
 
-安装匹配的 Flutter、Xcode 和 CocoaPods；在 `mobile_app` 执行：
+安装匹配的 Flutter 和 Xcode；当前锁定的依赖通过 Swift Package Manager 构建，无须额外配置 CocoaPods。在 `mobile_app` 执行：
 
 ```bash
 flutter pub get --enforce-lockfile
