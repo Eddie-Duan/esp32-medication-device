@@ -1,0 +1,76 @@
+name: iOS build check
+
+on:
+  push:
+    branches: [codex/ios-readiness]
+    paths: ['mobile_app/**', '.github/workflows/ios-check.yml']
+  pull_request:
+    paths: ['mobile_app/**', '.github/workflows/ios-check.yml']
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ios-check-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  ios:
+    runs-on: macos-15
+    timeout-minutes: 35
+    defaults:
+      run:
+        working-directory: mobile_app
+        shell: bash
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install pinned Flutter 3.47.4
+        run: |
+          set -euo pipefail
+          case "$(uname -m)" in
+            arm64)
+              archive=flutter_macos_arm64_3.47.4-stable.zip
+              checksum=c6af6fa1d64946167b8637ba4c5a7bb3b8574729a1ebe931decd4924dbab7061 ;;
+            x86_64)
+              archive=flutter_macos_3.47.4-stable.zip
+              checksum=72ced0f81a5ea48f30d221699fa45378cdd1fa15426512444f32e4e1bee9db8b ;;
+            *) exit 1 ;;
+          esac
+          curl --fail --location --retry 3 "https://storage.googleapis.com/flutter_infra_release/releases/stable/macos/$archive" -o "$RUNNER_TEMP/flutter.zip"
+          printf '%s  %s\n' "$checksum" "$RUNNER_TEMP/flutter.zip" | shasum -a 256 --check
+          unzip -q "$RUNNER_TEMP/flutter.zip" -d "$RUNNER_TEMP"
+          echo "$RUNNER_TEMP/flutter/bin" >> "$GITHUB_PATH"
+      - name: Record environment and resolve dependencies
+        run: |
+          set -euo pipefail
+          mkdir -p build/ios-validation
+          flutter --version | tee build/ios-validation/flutter-version.txt
+          xcodebuild -version | tee build/ios-validation/xcode-version.txt
+          pod --version
+          flutter config --no-analytics
+          flutter precache --ios
+          flutter pub get --enforce-lockfile
+      - name: Analyze and test shared iOS logic
+        run: |
+          set -euo pipefail
+          flutter analyze 2>&1 | tee build/ios-validation/analyze.txt
+          flutter test --reporter expanded 2>&1 | tee build/ios-validation/tests.txt
+      - name: Build iOS simulator app
+        run: |
+          set -euo pipefail
+          flutter build ios --simulator --debug 2>&1 | tee build/ios-validation/simulator-build.txt
+          ditto -c -k --keepParent build/ios/iphonesimulator/Runner.app build/ios-validation/ios-simulator-app.zip
+      - name: Compile unsigned iPhone app
+        run: |
+          set -euo pipefail
+          flutter build ios --debug --no-codesign 2>&1 | tee build/ios-validation/device-build.txt
+          ditto -c -k --keepParent build/ios/iphoneos/Runner.app build/ios-validation/ios-unsigned-device-app.zip
+      - name: Upload build logs and successful app bundles
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: ios-validation-${{ github.sha }}
+          path: mobile_app/build/ios-validation/
+          retention-days: 7
+          if-no-files-found: warn

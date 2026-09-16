@@ -8,6 +8,7 @@ import 'ble_transport.dart';
 import 'prototype_protocol.dart';
 import 'prototype_store.dart';
 import 'prototype_sync.dart';
+import 'ble_access.dart';
 
 class BleDeviceInfo {
   const BleDeviceInfo({
@@ -81,6 +82,12 @@ class BleService extends ChangeNotifier {
   bool autoScanEnabled = false;
   bool _suppressed = false;
   bool _disposed = false;
+  bool _foreground = true;
+  String? _resumeDeviceId;
+  bool _resumeScan = false;
+  Future<void> _lifecycle = Future.value();
+  bool get foreground => _foreground;
+  bool needsPermissionSettings = false;
   bool _initialized = false;
   bool _linkConnected = false;
   int _epoch = 0;
@@ -143,6 +150,8 @@ class BleService extends ChangeNotifier {
     _syncTimer?.cancel();
     _sync = null;
     lastError = '$error';
+    needsPermissionSettings =
+        error is BleAccessException && error.canOpenSettings;
     _log('$error');
     _state(BleConnectionStatus.error);
   }
@@ -208,7 +217,10 @@ class BleService extends ChangeNotifier {
   }
 
   Future<void> startScan() async {
-    if (_disposed || hasConnection || status == BleConnectionStatus.scanning) {
+    if (_disposed ||
+        !_foreground ||
+        hasConnection ||
+        status == BleConnectionStatus.scanning) {
       return;
     }
     _suppressed = false;
@@ -261,6 +273,8 @@ class BleService extends ChangeNotifier {
   }
 
   Future<void> cancelScan() async {
+    _resumeDeviceId = null;
+    _resumeScan = false;
     _suppressed = true;
     _reconnectTimer?.cancel();
     await _stopScan();
@@ -271,7 +285,7 @@ class BleService extends ChangeNotifier {
     String deviceId, {
     bool resetRetryCount = true,
   }) async {
-    if (_disposed) return;
+    if (_disposed || !_foreground) return;
     _suppressed = false;
     _reconnectTimer?.cancel();
     final epoch = ++_epoch;
@@ -440,7 +454,7 @@ class BleService extends ChangeNotifier {
   }
 
   Future<void> requestSync() async {
-    if (_disposed || !canSync) return;
+    if (_disposed || !_foreground || !canSync) return;
     final epoch = _epoch;
     _state(BleConnectionStatus.syncing);
     lastError = null;
@@ -535,6 +549,12 @@ class BleService extends ChangeNotifier {
   }
 
   Future<void> disconnect() async {
+    _resumeDeviceId = null;
+    _resumeScan = false;
+    await _disconnectLink();
+  }
+
+  Future<void> _disconnectLink() async {
     _suppressed = true;
     ++_epoch;
     _reconnectTimer?.cancel();
@@ -543,6 +563,37 @@ class BleService extends ChangeNotifier {
     connectedDeviceId = null;
     stableDeviceId = null;
     _state(BleConnectionStatus.disconnected);
+  }
+
+  /// Foreground-only BLE on both mobile platforms. Ignore `inactive` (permission
+  /// dialogs / Control Center); pause only on the application's `paused` event.
+  Future<void> setForeground(bool value) {
+    _lifecycle = _lifecycle
+        .then((_) async {
+          if (_disposed || _foreground == value) return;
+          _foreground = value;
+          if (!value) {
+            _resumeDeviceId = autoReconnectEnabled ? connectedDeviceId : null;
+            _resumeScan = status == BleConnectionStatus.scanning;
+            await _disconnectLink();
+            _log('已进入后台，暂停蓝牙；已保存记录保留');
+          } else {
+            final device = _resumeDeviceId;
+            final scan = _resumeScan;
+            _resumeDeviceId = null;
+            _resumeScan = false;
+            if (device != null && autoReconnectEnabled) {
+              await connectToDevice(device);
+            } else if (scan) {
+              await startScan();
+            }
+          }
+          _changed();
+        })
+        .catchError((Object error) {
+          _fail(error);
+        });
+    return _lifecycle;
   }
 
   Future<void> _close() async {

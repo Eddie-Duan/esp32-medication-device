@@ -8,6 +8,11 @@
 	<string>$(DEVELOPMENT_LANGUAGE)</string>
 	<key>CFBundleDisplayName</key>
 	<string>用药装置</string>
+	<key>CFBundleLocalizations</key>
+	<array>
+		<string>zh_CN</string>
+		<string>en</string>
+	</array>
 	<key>NSBluetoothAlwaysUsageDescription</key>
 	<string>连接用药装置并同步设备事件记录。</string>
 	<key>CFBundleExecutable</key>

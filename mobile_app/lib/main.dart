@@ -19,18 +19,30 @@ class _ConnectedApp extends StatefulWidget {
   State<_ConnectedApp> createState() => _ConnectedAppState();
 }
 
-class _ConnectedAppState extends State<_ConnectedApp> {
+class _ConnectedAppState extends State<_ConnectedApp>
+    with WidgetsBindingObserver {
   final _ble = BleService();
   @override
   void initState() {
     super.initState();
+    WidgetsBinding.instance.addObserver(this);
     unawaited(_ble.initializeAutoScan());
   }
 
   @override
   void dispose() {
+    WidgetsBinding.instance.removeObserver(this);
     _ble.dispose();
     super.dispose();
+  }
+
+  @override
+  void didChangeAppLifecycleState(AppLifecycleState state) {
+    if (state == AppLifecycleState.paused) {
+      unawaited(_ble.setForeground(false));
+    } else if (state == AppLifecycleState.resumed) {
+      unawaited(_ble.setForeground(true));
+    }
   }
 
   @override
