@@ -74,9 +74,25 @@ jobs:
           xcrun simctl bootstatus "$simulator" -b
           xcrun simctl install "$simulator" build/ios/iphonesimulator/Runner.app
           bundle_id=$(/usr/libexec/PlistBuddy -c 'Print CFBundleIdentifier' build/ios/iphonesimulator/Runner.app/Info.plist)
-          xcrun simctl launch "$simulator" "$bundle_id" | tee build/ios-validation/simulator-launch.txt
-          sleep 8
-          xcrun simctl io "$simulator" screenshot build/ios-validation/simulator-startup.png
+          xcrun swiftc tool/check_ios_startup.swift -o build/ios-validation/check-ios-startup
+          xcrun simctl launch --console "$simulator" "$bundle_id" > build/ios-validation/simulator-launch.txt 2>&1 &
+          launch_monitor=$!
+          trap 'kill "$launch_monitor" 2>/dev/null || true' EXIT
+          # A successful launch command is insufficient: cold simulators can
+          # still display an empty launch screen after several seconds.
+          startup_ready=false
+          for attempt in $(seq 1 18); do
+            sleep 5
+            xcrun simctl io "$simulator" screenshot build/ios-validation/simulator-startup.png
+            if build/ios-validation/check-ios-startup build/ios-validation/simulator-startup.png > build/ios-validation/startup-recognition.txt; then
+              startup_ready=true
+              break
+            fi
+          done
+          if [ "$startup_ready" != true ]; then
+            echo "The overview did not become visible; inspect the screenshot and simulator-launch.txt."
+            exit 1
+          fi
       - name: Upload build logs and startup screenshot
         if: always()
         uses: actions/upload-artifact@v4
