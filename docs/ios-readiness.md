@@ -2,6 +2,8 @@
 
 本轮基于 A+B 合并版开发，分支 `codex/ios-readiness`，目标 iOS 15+。Android 与 iOS 共用 Flutter 的页面、SQLite、协议、CSV 和助手代码，不另写一套 App。
 
+2026-09-16 验证：代码提交 `aec99ae` 在 Windows 和云端 macOS 上均通过静态检查与 **50 项测试**；云端模拟器编译、未签名 iPhone 编译、模拟器安装和启动截图步骤全部通过。[查看本次完整构建记录](https://github.com/zyc-ivsd/esp32-medication-device/actions/runs/35088984210)。这不是 iPhone 蓝牙实测或签名分发结果。
+
 ## 本轮改动
 
 | 模块 | 已写入代码 | 后续验收 |
