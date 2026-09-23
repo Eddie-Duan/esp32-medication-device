@@ -30,8 +30,9 @@ class AssistantContext {
   }
 
   String toPromptSummary() {
-    final syncText =
-        lastSyncAt == null ? '尚未同步' : '最后同步于 ${lastSyncAt!.toLocal()}';
+    final syncText = lastSyncAt == null
+        ? '尚未同步'
+        : '最后同步于 ${lastSyncAt!.toLocal()}';
     return '${isDemo ? '演示数据' : '设备记录'}：今天 $todayCount 次，近 7 天 $last7DaysCount 次，'
         '近 7 天疑似无效记录 $invalidEventCount 条，$syncText。'
         '时间未知 $unknownTimeCount 条、未来时间 $futureTimeCount 条不计入按日统计。';

@@ -1,7 +1,7 @@
 name: medication_device_app
-description: Android and iOS companion for the ESP32 medication device.
+description: Android companion for the ESP32 medication device with an optional Xiaozhi gateway.
 publish_to: "none"
-version: 0.2.0+2
+version: 0.3.0+3
 
 environment:
   sdk: ">=3.12.0 <4.0.0"

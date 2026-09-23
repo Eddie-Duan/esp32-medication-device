@@ -1,72 +1,62 @@
-# 用药装置 App · A+B 合并版
+# 用药装置 Android App · 0.3.0
 
-Flutter 共用 Android / iOS 代码。A 的本地记录、统计、筛选、CSV 和文字助手已与 B 的 BLE 扫描/连接合并。打开概览“设备连接”可接收并持久保存配套 ESP32-C3 固件的原型时间文本。安装与联调见 [A+B 交接](../docs/member-ab-integration.md)。
+Flutter / Dart 开发，A 的数据与页面已与 B 的 BLE 原型合并。本轮集中交付 Android；保留 iOS 历史工程，但不要求 Mac 或 iPhone 验收。
 
-## 已实现与待接入
+## 安装和体验
 
-| 范围 | 当前实现 |
-|---|---|
-| A0 平台基础 | Android / iOS 工程、依赖锁文件、蓝牙权限声明；运行时权限申请交给 B |
-| A1 数据与页面 | SQLite 持久化；设备 ID + 序号去重；记录详情、今日 / 7 日统计、演示入口 |
-| A4 筛选与助手 | 本地日期筛选；CSV 分享当前列表；Mock 助手每次提问重新读取数据库摘要 |
-| A3 保存接口 | 事务保存、完全相同的重复包识别、冲突拒绝、连续同步位置持久化 |
-| B 原型已实现 | 扫描 / 连接 / Notify、权限、订阅握手、CRC 分片校验、原型 SQLite、ACK/COMMIT、重试和去重 |
-| 正式协议待完成 | 正式事件解码入 A 库、正式游标续传、校时、按确认范围回收设备文件 |
-| A5 待联调 | Android / iPhone 真机运行、分享面板、权限异常和整机断线 / 掉电验收 |
+使用本轮 `app-debug.apk` 内部测试包：传到 Android 手机，从文件管理器打开，允许该来源安装，然后打开“用药装置”。Android 7.0 / API 24 以上可安装；是否支持目标手机蓝牙仍需实测。
 
-## 无硬件体验
+1. 无硬件：概览 → 导入演示数据 → 历史记录 / 日期筛选 / 详情 / 导出 CSV。
+2. 首次导入保存 11 条合成记录（含 1 条时间未知），当日显示今日 2 次、近 7 天 8 次使用动作。日期变化后统计自然变化。
+3. 有硬件：概览 → 设备连接 → 授予蓝牙权限 → 扫描连接硬件组的设备；完整步骤见 [A+B 联调](../docs/member-ab-integration.md)。
+4. 现有原型接收的是时间文本，保存在独立原型数据库，**不会进入正式历史、统计及助手摘要**。正式事件解码还需与固件组完成。
+5. 概览 → 问问记录助手：默认按本地规则回答，不联网。
 
-1. 打开 App，在“概览”向下滚动，点击“导入演示数据”。
-2. 首次导入保存 11 条合成记录，其中 1 条时间未知；当天导入后显示今日 2 次、近 7 天 8 次使用动作、近 7 天 1 条疑似无效。
-3. 打开“历史记录”，选择日期、查看详情，点击“导出 CSV”调用手机分享面板。
-4. 回到概览，向下找到“问问记录助手”；回答中的统计来自当前数据源。
-5. 关闭并重开 App，再切换“演示数据”，记录仍在。重复导入不增加记录；右上菜单可清除演示数据再重新导入。
+设备事件、演示事件、原型时间文本分别存储。清除演示数据不会删除设备数据。覆盖安装要求包名相同、签名一致且版本号允许；若提示签名冲突，先导出需要保留的数据，不要直接卸载旧版。
 
-演示时间固定在首次导入时，之后统计会随日期自然变化。演示与设备使用两个数据库，清除演示数据不会删除设备记录。应用不联网调用模型，也没有小智语音功能。
+## 在线文字助手
+
+在助手右上角“回答方式”菜单选择“在线助手设置”，填写团队网关完整地址（例如 `https://assistant.example.org/v1/assistant/chat`）和**网关访问码**，勾选摘要发送确认后启用。
+
+- 地址指向本仓库 Python 网关，不是小智的 WebSocket 地址，也不是智控台管理 API。
+- 只发送本次问题、当前数据源的统计摘要；不自动上传原始记录、设备标识或历史对话。用户在问题里主动输入的内容也会发送。
+- 设置和访问码仅保存在当前助手页面内存中，退出页面后需重新填写。可随时切回“本地摘要”。
+- 网关 `mock` 模式的回答明确标记“尚未调用小智”；真正的小智模式需要服务端配置完成。请求失败会显示错误，不冒充本地或小智成功回答。
+- 本轮只处理文字，不录音、不播放小智语音，不控制装置或修改记录。
+
+启动与实机联调步骤见 [网关操作说明](../server/assistant-gateway/README.md)。只有 debug 构建可用 `127.0.0.1`、`localhost`、模拟器 `10.0.2.2` 的 HTTP；其他地址和 release 构建必须使用可信证书 HTTPS。
 
 ## 开发与构建
 
-本轮使用 Flutter **3.47.4** / Dart **3.13.3**、JDK **17.0.20.1**、Android compile/target SDK **36**，提交 `pubspec.lock`。复现优先使用此版本；依赖的最低 SDK 约束见 `pubspec.yaml`。
+固定环境：Flutter **3.47.4** / Dart **3.13.3**、JDK **17**、Android compile/target SDK **36**，依赖见 `pubspec.lock`。配置好 Android SDK 与 `JAVA_HOME` 后：
 
 ```bash
 cd mobile_app
 flutter doctor -v
-flutter pub get
+flutter pub get --enforce-lockfile
 flutter analyze
 flutter test
 flutter build apk --debug
-flutter run -d DEVICE_ID
+adb devices
+adb install -r build/app/outputs/flutter-apk/app-debug.apk
 ```
 
-Android 安装包位于 `build/app/outputs/flutter-apk/app-debug.apk`，用于内部测试；连接并授权 USB 调试的 Android 手机可执行 `adb install -r build/app/outputs/flutter-apk/app-debug.apk`。也可以把 APK 传到手机，从文件管理器打开安装，然后打开“用药装置”。演示功能无需蓝牙硬件。
+USB 安装需打开手机开发者选项 / USB 调试，并在手机上授权电脑。debug APK 为内部测试包。当前 Gradle 的 release 仍使用 debug 签名，**不能作为正式商店发布包**；正式分发前建立团队保管的发布密钥并配置签名。
 
-蓝牙插件 `flutter_reactive_ble 5.5.0` 的 Android 库仍固定 compileSdk 33，本项目在 `android/build.gradle.kts` 中将该子项目调整为 36，避免 AndroidX 编译错误；无需修改本机 pub 缓存。上游问题见 [#911](https://github.com/PhilipsHue/flutter_reactive_ble/issues/911)。构建仍可能出现旧 Kotlin 插件兼容提示，后续升级 Flutter 前检查 [上游迁移进度](https://github.com/PhilipsHue/flutter_reactive_ble/issues/934)。
+可选 `--dart-define=ASSISTANT_GATEWAY_URL=https://your-host/v1/assistant/chat` 仅预填地址，不自动启用在线模式。不要用构建参数把 Token 或模型 API Key 写入 APK。
 
-Android 工程当前最低 API 24（Android 7.0）。iOS 工程目标为 iOS 15+；权限、前后台恢复和 iPhone/iPad 布局已补充自动化测试。Windows 可开发共用代码，原生构建交给新增的 GitHub macOS 工作流，具体结果以对应提交的 Actions 为准。没有可直接安装的签名 IPA、TestFlight 或 iPhone 验收结果。操作与分工见 [iOS 开发交接](../docs/ios-readiness.md)。
+`flutter_reactive_ble 5.5.0` 子项目的 compileSdk 在 `android/build.gradle.kts` 调整为 36，以兼容当前 AndroidX；不修改本机 pub 缓存。升级插件和 Flutter 时复查该兼容配置。
 
-## 接入位置
+## 代码入口与口径
 
-```text
-models/      MedicationRecord、日期筛选、统计口径
-database/    RecordRepository、SQLite、去重和同步位置
-services/    演示数据、页面数据控制器、CSV
-pages/       概览 / 历史 / 记录详情；预留连接卡片
-assistant/   AssistantContext、Mock Provider、助手页面
-ble/         B 的扫描/连接、原型协议、文本 SQLite 与联调页面
-```
+| 位置 | 内容 |
+|---|---|
+| `lib/database/`、`lib/models/` | 正式事件模型、事务、去重、连续同步位置 |
+| `lib/pages/`、`lib/services/` | 概览、历史、筛选、CSV、演示数据 |
+| `lib/ble/` | 原型扫描/连接、分片校验、文本数据库、联调页 |
+| `lib/assistant/` | 本地 / 在线 Provider、摘要、设置与聊天页面 |
+| `test/` | 数据、协议、页面、权限状态、在线助手网络契约测试 |
 
-B 请先阅读 [接口与联调说明](../docs/member-a-handoff.md)。`MedicationDeviceApp(connectionBuilder: ...)` 的回调始终提供设备数据库，即使用户正在查看演示数据。
+统计中 `event_type=1` 为使用动作，`event_type=2` 单独统计；未知与未来时间不计入按日统计。日期筛选影响历史与 CSV，助手每次提问重新读取当前数据源的今日 / 近 7 天摘要。
 
-统计中的“使用动作”仅计 `event_type=1`；`event_type=2` 单独统计。时间未知和未来时间不计入按日统计。历史日期筛选影响列表与 CSV；概览和助手始终展示当前数据源的今日 / 近 7 天摘要，不跟随历史列表筛选。
-
-## 验证方式
-
-`flutter test` 覆盖真实 SQLite 文件重开、重复与冲突、事务失败、两类数据隔离、连续位置、日期 / 异常时间、CSV 和页面交互。它们是电脑端自动化验证，不能替代手机系统权限、文件分享和 BLE 实测。
-
-可选生成界面预览（字体路径换成自己电脑的中文字体）：
-
-```bash
-flutter test tool/preview_app_test.dart --dart-define=PREVIEW_DIR=/absolute/output/path --dart-define=PREVIEW_FONT=/absolute/chinese-font.ttf
-```
-
-真实助手以后通过新的 `AssistantProvider` 和网关接入，约定见 [xiaozhi-bridge.md](../protocol/xiaozhi-bridge.md)。当前保留本地 Mock。
+电脑自动化测试不能替代 Android 权限弹窗、手机分享面板、BLE 射频与整机掉电验收。后续任务见 [Android 路线](../docs/android-roadmap.md)；历史 iOS 验证保留在 [归档说明](../docs/ios-readiness.md)。

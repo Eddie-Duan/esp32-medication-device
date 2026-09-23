@@ -1,5 +1,7 @@
 # iOS 开发交接：没有本地 Mac 也能先推进
 
+> 历史资料（2026-09-23 归档）：团队已决定本轮仅开发 Android，不再安排 iPhone 部署。以下保留当时验证事实；当前任务见 [Android 路线](android-roadmap.md)。
+
 本轮基于 A+B 合并版开发，分支 `codex/ios-readiness`，目标 iOS 15+。Android 与 iOS 共用 Flutter 的页面、SQLite、协议、CSV 和助手代码，不另写一套 App。
 
 2026-09-17 验证：共用 Dart 逻辑在 Windows 通过静态检查与 **50 项测试**；最终代码 `bdf8fe1` 在云端 macOS 再次通过分析、50 项测试、模拟器编译及未签名 iPhone 编译。模拟器成功打开首页，截图识别到“设备记录”和“历史记录”，并已人工查看。[查看最终构建记录](https://github.com/zyc-ivsd/esp32-medication-device/actions/runs/35122743488)。这不是 iPhone 蓝牙实测或签名分发结果。

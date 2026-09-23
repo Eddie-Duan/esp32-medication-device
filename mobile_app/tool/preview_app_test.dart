@@ -106,5 +106,10 @@ void main() {
     await tester.tap(find.widgetWithText(ActionChip, '今天用了几次？'));
     await tester.pumpAndSettle();
     await capture('app-assistant');
+    await tester.tap(find.byTooltip('回答方式'));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('在线助手设置'));
+    await tester.pumpAndSettle();
+    await capture('app-assistant-settings');
   }, skip: output.isEmpty);
 }

@@ -1,11 +1,6 @@
-name: iOS build check
+name: iOS archive check (manual only)
 
 on:
-  push:
-    branches: [codex/ios-readiness]
-    paths: ['mobile_app/**', '.github/workflows/ios-check.yml']
-  pull_request:
-    paths: ['mobile_app/**', '.github/workflows/ios-check.yml']
   workflow_dispatch:
 
 permissions:

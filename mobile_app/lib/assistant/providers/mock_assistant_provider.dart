@@ -36,7 +36,7 @@ class MockAssistantProvider implements AssistantProvider {
           '时间未知或晚于当前时间的记录不计入按日统计。';
     }
 
-    return '这是第一阶段 Mock 模式回答。当前记录摘要：${context.toPromptSummary()} '
-        '后续接入 AI 网关后，将由真实 Provider 生成回答。';
+    return '当前记录摘要：${context.toPromptSummary()} '
+        '本地助手按固定规则解释统计；可在右上角切换团队提供的在线助手。';
   }
 }

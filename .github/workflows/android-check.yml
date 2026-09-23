@@ -1,0 +1,90 @@
+name: Android and assistant gateway check
+
+on:
+  push:
+    branches: [main, codex/android-xiaozhi-prep]
+    paths: ['mobile_app/**', 'server/assistant-gateway/**', 'protocol/xiaozhi-bridge.md', '.github/workflows/android-check.yml']
+  pull_request:
+    paths: ['mobile_app/**', 'server/assistant-gateway/**', 'protocol/xiaozhi-bridge.md', '.github/workflows/android-check.yml']
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: android-check-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  gateway:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    defaults:
+      run:
+        working-directory: server/assistant-gateway
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+          cache: pip
+          cache-dependency-path: server/assistant-gateway/requirements.txt
+      - run: python -m pip install -r requirements.txt
+      - run: python -m unittest discover -s tests -v
+
+  android:
+    runs-on: ubuntu-latest
+    timeout-minutes: 35
+    defaults:
+      run:
+        working-directory: mobile_app
+        shell: bash
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+      - name: Install pinned Flutter 3.47.4
+        run: |
+          set -euo pipefail
+          curl --fail --location --retry 3 https://storage.googleapis.com/flutter_infra_release/releases/stable/linux/flutter_linux_3.47.4-stable.tar.xz -o "$RUNNER_TEMP/flutter.tar.xz"
+          printf '%s  %s\n' 5b45f0ceda99b9bebdc873e7e69f6450aeb4c30f454b505e2e62fc9255a907d3 "$RUNNER_TEMP/flutter.tar.xz" | sha256sum --check
+          tar -xf "$RUNNER_TEMP/flutter.tar.xz" -C "$RUNNER_TEMP"
+          echo "$RUNNER_TEMP/flutter/bin" >> "$GITHUB_PATH"
+      - name: Resolve locked dependencies
+        run: |
+          set -euo pipefail
+          mkdir -p build/android-validation
+          flutter --version | tee build/android-validation/flutter-version.txt
+          flutter config --no-analytics
+          flutter pub get --enforce-lockfile
+      - name: Prepare Android SDK 36
+        run: |
+          set -euo pipefail
+          "$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager" 'platforms;android-36' 'build-tools;36.0.0'
+      - name: Analyze and test
+        run: |
+          set -euo pipefail
+          flutter analyze --no-pub 2>&1 | tee build/android-validation/analyze.txt
+          flutter test --no-pub --reporter expanded 2>&1 | tee build/android-validation/tests.txt
+      - name: Build internal test APK
+        run: |
+          set -euo pipefail
+          flutter build apk --debug --no-pub 2>&1 | tee build/android-validation/build.txt
+          sha256sum build/app/outputs/flutter-apk/app-debug.apk > build/android-validation/apk-sha256.txt
+      - name: Upload validation logs
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: android-validation-${{ github.sha }}
+          path: mobile_app/build/android-validation/*.txt
+          retention-days: 14
+          if-no-files-found: warn
+      - name: Upload debug APK
+        uses: actions/upload-artifact@v4
+        with:
+          name: android-internal-debug-${{ github.sha }}
+          path: mobile_app/build/app/outputs/flutter-apk/app-debug.apk
+          retention-days: 14
+          if-no-files-found: error

@@ -1,6 +1,8 @@
 import 'package:flutter/material.dart';
 
 import 'assistant_service.dart';
+import 'assistant_exception.dart';
+import 'assistant_settings_dialog.dart';
 import 'models/assistant_context.dart';
 import 'models/chat_message.dart';
 
@@ -21,7 +23,7 @@ class AssistantPage extends StatefulWidget {
 }
 
 class _AssistantPageState extends State<AssistantPage> {
-  late final AssistantService _service;
+  late AssistantService _service;
   late final TextEditingController _inputController;
   late final ScrollController _scrollController;
   late final List<ChatMessage> _messages;
@@ -39,7 +41,7 @@ class _AssistantPageState extends State<AssistantPage> {
       ChatMessage(
         role: ChatRole.assistant,
         text:
-            '你好，我可以解释${_context.isDemo ? '演示数据' : '本地设备记录'}的统计。当前使用本地规则回答，不联网。记录的动作次数不代表确认服药。',
+            '你好，我可以解释${_context.isDemo ? '演示数据' : '本地设备记录'}的统计。${_service.isRemote ? '当前使用在线助手。' : '当前使用本地规则回答，不联网。'}记录的动作次数不代表确认服药。',
         createdAt: DateTime.now(),
       ),
     ];
@@ -58,11 +60,13 @@ class _AssistantPageState extends State<AssistantPage> {
 
     _inputController.clear();
     setState(() {
-      _messages.add(ChatMessage(
-        role: ChatRole.user,
-        text: question,
-        createdAt: DateTime.now(),
-      ));
+      _messages.add(
+        ChatMessage(
+          role: ChatRole.user,
+          text: question,
+          createdAt: DateTime.now(),
+        ),
+      );
       _sending = true;
     });
     _scrollToBottom();
@@ -81,11 +85,15 @@ class _AssistantPageState extends State<AssistantPage> {
     } catch (error) {
       if (!mounted) return;
       setState(() {
-        _messages.add(ChatMessage(
-          role: ChatRole.assistant,
-          text: '助手暂时不可用：$error',
-          createdAt: DateTime.now(),
-        ));
+        _messages.add(
+          ChatMessage(
+            role: ChatRole.assistant,
+            text: error is AssistantException
+                ? error.message
+                : '暂时无法读取记录或获取回答，请稍后重试。',
+            createdAt: DateTime.now(),
+          ),
+        );
       });
     } finally {
       if (mounted) {
@@ -93,6 +101,30 @@ class _AssistantPageState extends State<AssistantPage> {
         _scrollToBottom();
       }
     }
+  }
+
+  Future<void> _changeMode(String mode) async {
+    if (_sending) return;
+    final service = mode == 'local'
+        ? AssistantService()
+        : await showDialog<AssistantService>(
+            context: context,
+            builder: (_) => const AssistantSettingsDialog(),
+          );
+    if (service == null || !mounted) return;
+    setState(() {
+      _service = service;
+      _messages.clear();
+      _messages.add(
+        ChatMessage(
+          role: ChatRole.assistant,
+          text: service.isRemote
+              ? '已启用在线助手。每次提问只发送本次问题和当前统计摘要；历史对话不上传。'
+              : '已切回本地摘要，不联网。',
+          createdAt: DateTime.now(),
+        ),
+      );
+    });
   }
 
   void _scrollToBottom() {
@@ -111,16 +143,30 @@ class _AssistantPageState extends State<AssistantPage> {
     return Scaffold(
       appBar: AppBar(
         title: const Text('用药记录助手'),
-        actions: const [
+        actions: [
           Padding(
-            padding: EdgeInsets.only(right: 12),
+            padding: const EdgeInsets.only(right: 12),
             child: Center(
               child: Chip(
-                label: Text('Mock'),
-                avatar: Icon(Icons.science_outlined, size: 16),
+                label: Text(_service.isRemote ? '在线' : '本地'),
+                avatar: Icon(
+                  _service.isRemote
+                      ? Icons.cloud_outlined
+                      : Icons.offline_bolt_outlined,
+                  size: 16,
+                ),
                 visualDensity: VisualDensity.compact,
               ),
             ),
+          ),
+          PopupMenuButton<String>(
+            enabled: !_sending,
+            tooltip: '回答方式',
+            onSelected: _changeMode,
+            itemBuilder: (_) => const [
+              PopupMenuItem(value: 'local', child: Text('本地摘要')),
+              PopupMenuItem(value: 'online', child: Text('在线助手设置')),
+            ],
           ),
         ],
       ),
@@ -152,7 +198,9 @@ class _AssistantPageState extends State<AssistantPage> {
           mainAxisAlignment: MainAxisAlignment.spaceAround,
           children: [
             _summaryItem(
-                data.isDemo ? '今日 · 演示' : '今日', '${data.todayCount} 次'),
+              data.isDemo ? '今日 · 演示' : '今日',
+              '${data.todayCount} 次',
+            ),
             _summaryItem('近 7 天', '${data.last7DaysCount} 次'),
             _summaryItem('近 7 天疑似无效', '${data.invalidEventCount} 条'),
           ],
@@ -224,6 +272,7 @@ class _AssistantPageState extends State<AssistantPage> {
             Expanded(
               child: TextField(
                 controller: _inputController,
+                maxLength: 1000,
                 textInputAction: TextInputAction.send,
                 onSubmitted: (_) => _send(),
                 decoration: const InputDecoration(

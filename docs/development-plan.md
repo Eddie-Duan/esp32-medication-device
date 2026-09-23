@@ -1,5 +1,7 @@
 # ESP32-S3 智能用药装置：Flutter 手机 App + 开源辅助工具开发方案
 
+> 历史方案：包含尚未实现的 S3 / ESP-IDF 等目标。2026-09-23 起当前交付为 Android + 自建小智文字网关，最新分工和验收见 [Android 路线](android-roadmap.md)。
+
 
 项目拆成两个软件端：
 
