@@ -1,5 +1,7 @@
 # Android → 自建小智：文字助手协议 v1
 
+> 本文记录上一阶段自建 `xiaozhi-esp32-server` 的适配方案。团队已改为希望接小智官方云；本文 `/v1/assistant/chat`、自建服务器 WebSocket 不能直接当作官方云 API。官方接入待确认，详见[官方云说明](../docs/xiaozhi-official-cloud.md)。
+
 本轮目标是 `xinnan-tech/xiaozhi-esp32-server`。`POST /v1/assistant/chat` 是**本仓库实现的网关接口**，不是上游提供的 REST API。
 
 ```text

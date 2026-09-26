@@ -16,6 +16,8 @@ Flutter / Dart 开发，A 的数据与页面已与 B 的 BLE 原型合并。本�
 
 ## 在线文字助手
 
+**0.3.0 还没有接入小智官方云。** 本节所述“在线助手设置”只连接上一阶段的团队 Python 网关。团队已将目标改为官方云，设备激活、App 作为云端客户端的凭据和官方文字问答尚待验证；不要把小智账号密码、ESP32 eFuse 密钥或上游 WebSocket Token 当成网关访问码填入。
+
 在助手右上角“回答方式”菜单选择“在线助手设置”，填写团队网关完整地址（例如 `https://assistant.example.org/v1/assistant/chat`）和**网关访问码**，勾选摘要发送确认后启用。
 
 - 地址指向本仓库 Python 网关，不是小智的 WebSocket 地址，也不是智控台管理 API。
@@ -24,7 +26,7 @@ Flutter / Dart 开发，A 的数据与页面已与 B 的 BLE 原型合并。本�
 - 网关 `mock` 模式的回答明确标记“尚未调用小智”；真正的小智模式需要服务端配置完成。请求失败会显示错误，不冒充本地或小智成功回答。
 - 本轮只处理文字，不录音、不播放小智语音，不控制装置或修改记录。
 
-启动与实机联调步骤见 [网关操作说明](../server/assistant-gateway/README.md)。只有 debug 构建可用 `127.0.0.1`、`localhost`、模拟器 `10.0.2.2` 的 HTTP；其他地址和 release 构建必须使用可信证书 HTTPS。
+该旧网关的启动步骤见 [网关操作说明](../server/assistant-gateway/README.md)。官方云接入限制及硬件前置条件见[单独说明](../docs/xiaozhi-official-cloud.md)。只有 debug 构建可用 `127.0.0.1`、`localhost`、模拟器 `10.0.2.2` 的 HTTP；其他地址和 release 构建必须使用可信证书 HTTPS。
 
 ## 开发与构建
 
