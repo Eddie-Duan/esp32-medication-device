@@ -38,6 +38,7 @@ flowchart LR
 
 ## 从哪里开始
 
+- 小智开发分支、代码入口与验收：[小智成员交接](docs/xiaozhi-developer-handoff.md)。
 - 安装、体验与编译：[Android App 说明](mobile_app/README.md)。
 - 本轮分工与验收：[Android 开发路线](docs/android-roadmap.md)。
 - 连接现有硬件：[A+B 联调说明](docs/member-ab-integration.md)。

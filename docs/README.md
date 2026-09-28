@@ -4,6 +4,7 @@
 
 - [Android 当前路线与分工](android-roadmap.md)：本轮任务与验收入口。
 - [小智官方云接入可行性](xiaozhi-official-cloud.md)：激活约束、现有固件缺口与决策顺序。
+- [小智接入开发交接](xiaozhi-developer-handoff.md)：推荐分支、代码入口和验收边界。
 - [A+B 硬件联调说明](member-ab-integration.md)：现有 BLE 原型操作。
 - [正式数据层接口](member-a-handoff.md)：供正式协议接入参考。
 - [App 安装与构建](../mobile_app/README.md)。
