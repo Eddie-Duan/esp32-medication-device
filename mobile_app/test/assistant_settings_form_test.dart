@@ -17,7 +17,7 @@ void _useTallViewport(WidgetTester tester) {
   addTearDown(tester.view.resetDevicePixelRatio);
 }
 
-Future<_FormHarness> openForm(
+Future<_FormHarness> _openForm(
   WidgetTester tester, {
   AssistantProfile? initial,
 }) async {
@@ -67,7 +67,7 @@ const _presets = <String, String>{
 
 void main() {
   testWidgets('点预设一下填好地址与模型名，名字空着才补', (tester) async {
-    await openForm(tester);
+    await _openForm(tester);
     await tester.tap(find.text('我自己的模型'));
     await tester.pumpAndSettle();
     expect(find.text('常见服务（点一下自动填地址和模型名）'), findsOneWidget);
@@ -92,7 +92,7 @@ void main() {
 
   testWidgets('每个预设地址都能通过保存前的校验', (tester) async {
     for (final entry in _presets.entries) {
-      final harness = await openForm(tester);
+      final harness = await _openForm(tester);
       await tester.tap(find.text('我自己的模型'));
       await tester.pumpAndSettle();
       await tester.tap(find.text(entry.key));
@@ -106,7 +106,7 @@ void main() {
   });
 
   testWidgets('自带模型的输入框带填写示范', (tester) async {
-    await openForm(tester);
+    await _openForm(tester);
     await tester.tap(find.text('我自己的模型'));
     await tester.pumpAndSettle();
     // 只填到 /v1 也可以，路径由 App 补齐——这点必须写在界面上。
@@ -116,7 +116,7 @@ void main() {
   });
 
   testWidgets('姓名留空时用兜底名，保存后回到调用方', (tester) async {
-    final harness = await openForm(tester);
+    final harness = await _openForm(tester);
     await tester.tap(find.text('我自己的模型'));
     await tester.pumpAndSettle();
     await tester.enterText(
@@ -132,7 +132,7 @@ void main() {
   });
 
   testWidgets('同意是保存的前提，未同意时保存不可点', (tester) async {
-    await openForm(tester);
+    await _openForm(tester);
     expect(
       tester
           .widget<FilledButton>(find.widgetWithText(FilledButton, '保存'))
@@ -150,13 +150,13 @@ void main() {
 
   testWidgets('地址不完整或 Key 为空时就地报错，不返回配置', (tester) async {
     // 网关地址不完整。
-    var harness = await openForm(tester);
+    var harness = await _openForm(tester);
     await agreeAndSave(tester);
     expect(find.textContaining('请输入完整的网关地址'), findsOneWidget);
     expect(harness.result, isNull);
 
     // 自带模型：地址合法但没填 Key。
-    harness = await openForm(tester);
+    harness = await _openForm(tester);
     await tester.tap(find.text('我自己的模型'));
     await tester.pumpAndSettle();
     await tester.enterText(
@@ -178,7 +178,7 @@ void main() {
       apiKey: 'saved-key',
       model: 'deepseek-chat',
     );
-    await openForm(tester, initial: existing);
+    await _openForm(tester, initial: existing);
 
     expect(find.text('修改 API'), findsOneWidget);
     expect(fieldText(tester, 'profile-name'), 'DeepSeek');
@@ -188,7 +188,7 @@ void main() {
   });
 
   testWidgets('凭据默认打码，点「显示」才看得见', (tester) async {
-    await openForm(tester, initial: const AssistantProfile(
+    await _openForm(tester, initial: const AssistantProfile(
       id: 'g1',
       name: '团队网关',
       mode: OnlineAssistantMode.gateway,
@@ -209,7 +209,7 @@ void main() {
   });
 
   testWidgets('保存前写明发送什么、不发送什么、凭据存在哪', (tester) async {
-    await openForm(tester);
+    await _openForm(tester);
 
     expect(find.textContaining('你本次输入的问题原文'), findsOneWidget);
     expect(find.text('不会发送什么'), findsOneWidget);

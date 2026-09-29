@@ -80,7 +80,7 @@ class GatewayAssistantProvider implements AssistantProvider {
   ///
   /// 错误响应体可能带上游内部信息，所以绝不整体回显；读不出来就返回 null，
   /// 用户看到的仍然是原来那句固定文案。
-  static Future<String?> _requestIdOf(HttpResponse response) async {
+  static Future<String?> _requestIdOf(HttpClientResponse response) async {
     try {
       final bytes = <int>[];
       await for (final chunk in response) {

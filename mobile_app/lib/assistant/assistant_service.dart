@@ -10,7 +10,8 @@ class AssistantService {
     this.isRemote = false,
     DateTime? now,
   })  : _provider = provider ?? MockAssistantProvider(),
-        _now = now;
+        // 命名参数不能叫 `_now`，只能用公开名 `now` 显式赋值；同 ble_service.dart。
+        _now = now; // ignore: prefer_initializing_formals
 
   final AssistantProvider _provider;
   final bool isRemote;

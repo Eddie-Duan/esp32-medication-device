@@ -76,18 +76,25 @@ class _AssistantApiConsoleState extends State<AssistantApiConsole> {
     return true;
   }
 
-  /// 选中某条并切到在线。
-  Future<void> _use(AssistantProfile profile) async {
-    AssistantProvider? provider;
+  /// 构造这条档案的 provider；走不通时把原因写进 [_error] 并返回 null。
+  ///
+  /// 返回值保持可空，是为了让调用方必须显式处理「这条路走不通」，
+  /// 而不是把构造异常抛给页面。
+  AssistantProvider? _resolveProvider(AssistantProfile profile) {
     try {
-      provider = profile.toProvider();
+      return profile.toProvider();
     } on AssistantException catch (error) {
       setState(() => _error = error.message);
-      return;
+      return null;
     } catch (_) {
       setState(() => _error = '这条配置不完整，请先编辑补全。');
-      return;
+      return null;
     }
+  }
+
+  /// 选中某条并切到在线。
+  Future<void> _use(AssistantProfile profile) async {
+    final provider = _resolveProvider(profile);
     if (provider == null) return;
     if (!await _persist(_state.withSelection(profile.id))) return;
     if (!mounted) return;
