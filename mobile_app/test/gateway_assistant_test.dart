@@ -22,6 +22,15 @@ class _RemoteFailure implements AssistantProvider {
   }) async => throw const AssistantException('在线助手响应超时，请稍后重试或切回本地摘要。');
 }
 
+/// 设置表单比默认 600 视口高，内容会长在弹窗的可滚动区里；
+/// 放大视口免得勾选框落在可视区外点不到。
+void _useTallViewport(WidgetTester tester) {
+  tester.view.physicalSize = const Size(800, 1600);
+  tester.view.devicePixelRatio = 1;
+  addTearDown(tester.view.resetPhysicalSize);
+  addTearDown(tester.view.resetDevicePixelRatio);
+}
+
 void main() {
   const context = AssistantContext(
     todayCount: 2,
@@ -280,6 +289,7 @@ void main() {
   testWidgets('online setup requires consent before saving a gateway', (
     tester,
   ) async {
+    _useTallViewport(tester);
     await tester.pumpWidget(
       const MaterialApp(home: Scaffold(body: AssistantSettingsDialog())),
     );
