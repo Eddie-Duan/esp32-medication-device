@@ -140,11 +140,14 @@ void main() {
   test('本地助手把需要留意的观察追加到具体回答之后', () async {
     final answer = await MockAssistantProvider(now: now).reply(
       question: '今天用了几次？',
-      context: AssistantContext(
+      // 这次没有 lastSyncAt，参数全是常量，所以这里可以用 const。
+      // 注意 dailyCounts 不能再写 const：在 const 上下文中它已经是常量，
+      // 重复标注会触发 unnecessary_const。
+      context: const AssistantContext(
         totalCount: 9,
         last7DaysCount: 3,
         unknownTimeCount: 2,
-        dailyCounts: const [0, 1, 0, 2, 0, 0, 0],
+        dailyCounts: [0, 1, 0, 2, 0, 0, 0],
         isDemo: true,
       ),
     );
