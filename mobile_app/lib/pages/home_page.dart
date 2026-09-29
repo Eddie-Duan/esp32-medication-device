@@ -175,6 +175,12 @@ class _HomePageState extends State<HomePage> with WidgetsBindingObserver {
       animation: data,
       builder: (context, _) => Scaffold(
           appBar: AppBar(title: const Text('用药装置'), actions: [
+            // 助手是核心入口，不能只藏在滚动区底部的按钮里。
+            IconButton(
+                onPressed:
+                    data.summary == null || data.loading ? null : _openAssistant,
+                tooltip: '记录助手',
+                icon: const Icon(Icons.chat_bubble_outline)),
             IconButton(
                 onPressed: data.loading ? null : data.refresh,
                 tooltip: '刷新记录',
@@ -224,9 +230,15 @@ class _HomePageState extends State<HomePage> with WidgetsBindingObserver {
                                   const EdgeInsets.symmetric(horizontal: 20),
                               padding: const EdgeInsets.all(12),
                               decoration: BoxDecoration(
-                                  color: const Color(0xfffff0ce),
+                                  color: Theme.of(context)
+                                      .colorScheme
+                                      .tertiaryContainer,
                                   borderRadius: BorderRadius.circular(12)),
-                              child: const Text('当前为演示数据，与设备记录分开保存。')),
+                              child: Text('当前为演示数据，与设备记录分开保存。',
+                                  style: TextStyle(
+                                      color: Theme.of(context)
+                                          .colorScheme
+                                          .onTertiaryContainer))),
                         if (data.loading)
                           const LinearProgressIndicator(minHeight: 2),
                         Expanded(
@@ -380,6 +392,10 @@ class _HomePageState extends State<HomePage> with WidgetsBindingObserver {
                                   ]))
                             ]))),
           const SizedBox(height: 12),
+          if ((summary?.total ?? 0) == 0)
+            const Padding(
+                padding: EdgeInsets.only(bottom: 8),
+                child: Text('还没有记录。记录助手需要有记录才有内容可解释，可以先载入演示数据看看。')),
           if (data.source == RecordSource.device || (summary?.total ?? 0) == 0)
             OutlinedButton.icon(
                 onPressed: _working ? null : _importDemo,
@@ -392,8 +408,10 @@ class _HomePageState extends State<HomePage> with WidgetsBindingObserver {
               icon: const Icon(Icons.chat_bubble_outline),
               label: const Text('问问记录助手')),
           const SizedBox(height: 12),
-          const Text('助手使用本地规则解释统计。设备事件不等于确认服药，也不用于计算药量。',
-              style: TextStyle(fontSize: 12, color: Color(0xff586b70))),
+          Text('助手使用本地规则解释统计。设备事件不等于确认服药，也不用于计算药量。',
+              style: TextStyle(
+                  fontSize: 12,
+                  color: Theme.of(context).colorScheme.onSurfaceVariant)),
         ]);
   }
 

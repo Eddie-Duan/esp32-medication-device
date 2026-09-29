@@ -179,8 +179,10 @@ class _AssistantPageState extends State<AssistantPage> {
             child: ListView.builder(
               controller: _scrollController,
               padding: const EdgeInsets.fromLTRB(16, 4, 16, 16),
-              itemCount: _messages.length,
-              itemBuilder: (context, index) => _buildMessage(_messages[index]),
+              itemCount: _messages.length + (_sending ? 1 : 0),
+              itemBuilder: (context, index) => index == _messages.length
+                  ? _buildThinkingBubble()
+                  : _buildMessage(_messages[index]),
             ),
           ),
           _buildQuickQuestions(),
@@ -295,20 +297,50 @@ class _AssistantPageState extends State<AssistantPage> {
     final colorScheme = Theme.of(context).colorScheme;
     return Align(
       alignment: message.isUser ? Alignment.centerRight : Alignment.centerLeft,
-      child: Container(
-        constraints: const BoxConstraints(maxWidth: 330),
-        margin: const EdgeInsets.only(bottom: 8),
-        padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
-        decoration: BoxDecoration(
-          color: message.isUser
-              ? colorScheme.primaryContainer
-              : colorScheme.surfaceContainerHighest,
-          borderRadius: BorderRadius.circular(16),
+      child: Semantics(
+        // 读屏时需要听出这是谁说的话，否则提问和回答会混在一起。
+        label: '${message.isUser ? '我的提问' : '助手回答'}：${message.text}',
+        excludeSemantics: true,
+        child: Container(
+          constraints: const BoxConstraints(maxWidth: 330),
+          margin: const EdgeInsets.only(bottom: 8),
+          padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
+          decoration: BoxDecoration(
+            color: message.isUser
+                ? colorScheme.primaryContainer
+                : colorScheme.surfaceContainerHighest,
+            borderRadius: BorderRadius.circular(16),
+          ),
+          child: Text(message.text),
         ),
-        child: Text(message.text),
       ),
     );
   }
+
+  /// 在线助手最长可能等 55 秒；只靠发送按钮上的小转圈，对话区看起来像卡死了。
+  Widget _buildThinkingBubble() => Align(
+        alignment: Alignment.centerLeft,
+        child: Container(
+          margin: const EdgeInsets.only(bottom: 8),
+          padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
+          decoration: BoxDecoration(
+            color: Theme.of(context).colorScheme.surfaceContainerHighest,
+            borderRadius: BorderRadius.circular(16),
+          ),
+          child: Row(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              const SizedBox(
+                width: 14,
+                height: 14,
+                child: CircularProgressIndicator(strokeWidth: 2),
+              ),
+              const SizedBox(width: 10),
+              Text(_service.isRemote ? '正在询问在线助手…' : '正在读取本地统计…'),
+            ],
+          ),
+        ),
+      );
 
   Widget _buildQuickQuestions() {
     return SizedBox(
