@@ -10,7 +10,8 @@ Flutter / Dart 开发，A 的数据与页面已与 B 的 BLE 原型合并。本�
 2. 首次导入保存 11 条合成记录（含 1 条时间未知），当日显示今日 2 次、近 7 天 8 次使用动作。日期变化后统计自然变化。
 3. 有硬件：概览 → 设备连接 → 授予蓝牙权限 → 扫描连接硬件组的设备；完整步骤见 [A+B 联调](../docs/member-ab-integration.md)。
 4. 现有原型接收的是时间文本，保存在独立原型数据库，**不会进入正式历史、统计及助手摘要**。正式事件解码还需与固件组完成。
-5. 概览 → 问问记录助手：默认按本地规则回答，不联网。
+5. 概览 → 问问记录助手：默认按本地规则回答，不联网。摘要卡片会画出**助手实际读到的近 7 天逐日次数**，快捷问句包含“有什么建议？”。
+6. 概览顶部出现**“需要留意”卡片**时，表示本地规则发现了数据质量或设备维护问题；它和助手用的是同一套规则（见 [`docs/assistant-local-rules.md`](../docs/assistant-local-rules.md)）。卡片可在本次会话内关闭。
 
 设备事件、演示事件、原型时间文本分别存储。清除演示数据不会删除设备数据。覆盖安装要求包名相同、签名一致且版本号允许；若提示签名冲突，先导出需要保留的数据，不要直接卸载旧版。
 
@@ -42,6 +43,8 @@ flutter build apk --debug
 adb devices
 adb install -r build/app/outputs/flutter-apk/app-debug.apk
 ```
+
+`flutter analyze` 对 warning 和 info **也返回失败**，提交前要保证 0 issue。const 相关提示（`prefer_const_constructors`、`unnecessary_const`、const 构造函数里的断言）最容易出现在测试文件里。注意：没有任何 Flutter 的机器上，编辑器的静态检查会**漏报** Dart 错误，Dart 代码以 CI 结果为准。
 
 USB 安装需打开手机开发者选项 / USB 调试，并在手机上授权电脑。debug APK 为内部测试包。当前 Gradle 的 release 仍使用 debug 签名，**不能作为正式商店发布包**；正式分发前建立团队保管的发布密钥并配置签名。
 

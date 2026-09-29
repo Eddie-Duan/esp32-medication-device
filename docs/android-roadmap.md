@@ -11,6 +11,17 @@
 
 这些是代码与自动化能力，不代表 Android 真机、真实小智模型或整机链路已经验收。
 
+## App 侧本地规则助手（2026-09-29）
+
+已在 `codex/android-xiaozhi-prep` 上完成，并经 CI 验证（analyze 0 issue、65 项测试、debug APK 构建通过）：
+
+- 助手摘要从 5 个汇总计数扩展为**总数 + 近 7 天逐日序列**，因此能回答“哪几天没有记录”“分布是否均匀”这类问题。契约见 [`protocol/xiaozhi-bridge.md`](../protocol/xiaozhi-bridge.md)，网关侧强制校验逐日之和等于 7 天总数。
+- 新增本地规则引擎 `mobile_app/lib/assistant/rules/observation_rules.dart`（9 条观察，分 info / attention 两级）；规则与文案见 [`assistant-local-rules.md`](assistant-local-rules.md)。
+- 概览页新增“需要留意”卡片，与助手**共用同一套规则**；助手页摘要卡片画出逐日次数，快捷问句增加“有什么建议？”。
+- 以上均不联网、不需要账号、不需要设备。
+
+**仍然受限**：助手的输入是**正式记录**（`RecordSummary`），而正式事件帧尚未冻结（见下表第 6 项）。所以目前只有“导入演示数据”时助手才有内容可解释；原型 BLE 时间文本**不会**进入摘要。相关前置条件见 [`assistant-data-requirements.md`](assistant-data-requirements.md)。
+
 ## 接下来按这个顺序派发
 
 | 顺序 / 负责人 | 任务 | 交付与验收 |
