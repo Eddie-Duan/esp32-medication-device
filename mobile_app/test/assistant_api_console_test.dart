@@ -83,12 +83,15 @@ Future<void> openConsole(
         builder: (context) => Scaffold(
           body: Center(
             child: ElevatedButton(
-              onPressed: () async => onResult?.call(
-                await showDialog<AssistantService>(
+              // 不要写成 onResult?.call(await showDialog(...))：?. 会短路，
+              // onResult 为空时参数不求值，showDialog 根本不会被调用，对话框也就不出现。
+              onPressed: () async {
+                final service = await showDialog<AssistantService>(
                   context: context,
                   builder: (_) => AssistantApiConsole(store: store),
-                ),
-              ),
+                );
+                onResult?.call(service);
+              },
               child: const Text('打开控制台'),
             ),
           ),

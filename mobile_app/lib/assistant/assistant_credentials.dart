@@ -152,7 +152,9 @@ class AssistantProfile {
     return AssistantProfile(
       // 老档没有 id：用内容派生一个稳定的替代值，保证它仍然可被选中和删除。
       id: id.isNotEmpty ? id : derivedId,
-      name: name.isNotEmpty ? name : text(data['model']),
+      // 旧档没有 name 就保持为空：兜底显示名由 autoName() 负责。在这里用 model
+      // 填进去，会让「存下来的」和「用户填过的」变得分不清。
+      name: name,
       mode: mode,
       endpoint: text(data['endpoint']),
       accessToken: text(data['access_token']),
