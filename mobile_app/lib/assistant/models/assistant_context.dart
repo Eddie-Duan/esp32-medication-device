@@ -1,4 +1,10 @@
 class AssistantContext {
+  /// 构造常量实例。
+  ///
+  /// 这里**不能**写 `assert(dailyCounts.length == 7)`：const 构造函数的断言必须
+  /// 是常量表达式，而 `List.length` 不是，加上它会让所有 `const AssistantContext(...)`
+  /// 编译失败。长度由 `RecordSummary.toAssistantContext` 的生成方式保证（固定 7 项），
+  /// 并在网关侧强制校验。
   const AssistantContext({
     this.todayCount = 0,
     this.last7DaysCount = 0,
@@ -9,7 +15,7 @@ class AssistantContext {
     this.futureTimeCount = 0,
     this.totalCount = 0,
     this.dailyCounts = const [0, 0, 0, 0, 0, 0, 0],
-  }) : assert(dailyCounts.length == 7, 'dailyCounts 必须正好 7 天');
+  });
 
   final int todayCount;
   final int last7DaysCount;
@@ -22,7 +28,7 @@ class AssistantContext {
   /// 全部记录条数，包含时间未知与未来时间的记录。
   final int totalCount;
 
-  /// 近 7 天逐日使用动作次数，最早一天在前、今天在最后。
+  /// 近 7 天逐日使用动作次数，**总是 7 项**，最早一天在前、今天在最后。
   final List<int> dailyCounts;
 
   Map<String, dynamic> toJson() {
