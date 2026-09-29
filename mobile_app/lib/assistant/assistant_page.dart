@@ -1,3 +1,5 @@
+import 'dart:math' as math;
+
 import 'package:flutter/material.dart';
 
 import 'assistant_service.dart';
@@ -194,18 +196,88 @@ class _AssistantPageState extends State<AssistantPage> {
       margin: const EdgeInsets.fromLTRB(16, 12, 16, 8),
       child: Padding(
         padding: const EdgeInsets.all(12),
-        child: Row(
-          mainAxisAlignment: MainAxisAlignment.spaceAround,
+        child: Column(
           children: [
-            _summaryItem(
-              data.isDemo ? '今日 · 演示' : '今日',
-              '${data.todayCount} 次',
+            Row(
+              mainAxisAlignment: MainAxisAlignment.spaceAround,
+              children: [
+                _summaryItem(
+                  data.isDemo ? '今日 · 演示' : '今日',
+                  '${data.todayCount} 次',
+                ),
+                _summaryItem('近 7 天', '${data.last7DaysCount} 次'),
+                _summaryItem('近 7 天疑似无效', '${data.invalidEventCount} 条'),
+              ],
             ),
-            _summaryItem('近 7 天', '${data.last7DaysCount} 次'),
-            _summaryItem('近 7 天疑似无效', '${data.invalidEventCount} 条'),
+            const SizedBox(height: 12),
+            const Divider(height: 1),
+            const SizedBox(height: 10),
+            _buildDailyBars(data),
           ],
         ),
       ),
+    );
+  }
+
+  /// 把助手实际读到的逐日数据画出来，让用户看得见助手“知道什么”，
+  /// 而不是只面对三个汇总数字。
+  Widget _buildDailyBars(AssistantContext data) {
+    final max = data.dailyCounts.fold<int>(
+      1,
+      (current, count) => math.max(current, count),
+    );
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Text(
+          '近 7 天逐日使用动作（左最早，右今天）',
+          style: Theme.of(context).textTheme.labelMedium,
+        ),
+        const SizedBox(height: 8),
+        SizedBox(
+          height: 52,
+          child: Row(
+            crossAxisAlignment: CrossAxisAlignment.end,
+            children: [
+              for (var index = 0; index < data.dailyCounts.length; index++)
+                Expanded(
+                  child: Semantics(
+                    label:
+                        '第 ${index + 1} 天，${data.dailyCounts[index]} 次使用动作',
+                    excludeSemantics: true,
+                    child: Column(
+                      mainAxisAlignment: MainAxisAlignment.end,
+                      children: [
+                        Text(
+                          '${data.dailyCounts[index]}',
+                          style: const TextStyle(fontSize: 10),
+                        ),
+                        const SizedBox(height: 4),
+                        Container(
+                          width: 14,
+                          height: math.max(
+                            3,
+                            data.dailyCounts[index] / max * 28,
+                          ),
+                          decoration: BoxDecoration(
+                            color: Theme.of(context).colorScheme.primary,
+                            borderRadius: BorderRadius.circular(4),
+                          ),
+                        ),
+                      ],
+                    ),
+                  ),
+                ),
+            ],
+          ),
+        ),
+        const SizedBox(height: 6),
+        Text(
+          '共 ${data.totalCount} 条本地记录'
+          '${data.lastSyncAt == null ? '' : ' · 最后同步 ${data.lastSyncAt!.toLocal()}'}',
+          style: Theme.of(context).textTheme.bodySmall,
+        ),
+      ],
     );
   }
 
@@ -248,6 +320,7 @@ class _AssistantPageState extends State<AssistantPage> {
           _quickQuestion('今天用了几次？'),
           _quickQuestion('最近有异常吗？'),
           _quickQuestion('查看最近一周'),
+          _quickQuestion('有什么建议？'),
         ],
       ),
     );

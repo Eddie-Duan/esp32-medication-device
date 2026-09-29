@@ -2,6 +2,7 @@ import 'dart:async';
 import 'dart:math' as math;
 import 'package:flutter/material.dart';
 import '../assistant/assistant_page.dart';
+import '../assistant/rules/observation_rules.dart';
 import '../database/record_repository.dart';
 import '../models/medication_record.dart';
 import '../models/record_filter.dart';
@@ -32,6 +33,9 @@ class HomePage extends StatefulWidget {
 class _HomePageState extends State<HomePage> with WidgetsBindingObserver {
   int _tab = 0;
   bool _working = false;
+
+  /// 用户在本次会话里关掉提醒卡片后不再显示；重新打开 App 会重新评估。
+  bool _alertDismissed = false;
   RecordController get data => widget.controller;
   @override
   void initState() {
@@ -244,6 +248,57 @@ class _HomePageState extends State<HomePage> with WidgetsBindingObserver {
                 NavigationDestination(icon: Icon(Icons.history), label: '历史记录'),
               ])));
 
+  /// 与助手共用同一套规则：概览页只负责把 attention 级观察提前告诉用户，
+  /// 自己不再实现一份判断逻辑。
+  List<AssistantObservation> _attentionObservations() {
+    final summary = data.summary;
+    if (summary == null) return const [];
+    return evaluateObservations(summary.toAssistantContext(data.source),
+            now: data.clock())
+        .where((observation) => observation.level == ObservationLevel.attention)
+        .toList(growable: false);
+  }
+
+  Widget _alertCard(List<AssistantObservation> observations) {
+    final scheme = Theme.of(context).colorScheme;
+    return Card(
+        margin: EdgeInsets.zero,
+        color: scheme.tertiaryContainer,
+        child: Padding(
+            padding: const EdgeInsets.fromLTRB(16, 12, 4, 12),
+            child:
+                Row(crossAxisAlignment: CrossAxisAlignment.start, children: [
+              Icon(Icons.notifications_active_outlined,
+                  size: 22, color: scheme.onTertiaryContainer),
+              const SizedBox(width: 12),
+              Expanded(
+                  child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                    Text('需要留意 ${observations.length} 项',
+                        style: TextStyle(
+                            fontWeight: FontWeight.bold,
+                            color: scheme.onTertiaryContainer)),
+                    const SizedBox(height: 8),
+                    for (final observation in observations)
+                      Padding(
+                          padding: const EdgeInsets.only(bottom: 6),
+                          child: Text('· ${observation.text}',
+                              style: TextStyle(
+                                  color: scheme.onTertiaryContainer))),
+                    Align(
+                        alignment: Alignment.centerLeft,
+                        child: TextButton(
+                            onPressed: _openAssistant,
+                            child: const Text('问问记录助手'))),
+                  ])),
+              IconButton(
+                  onPressed: () => setState(() => _alertDismissed = true),
+                  tooltip: '本次不再显示',
+                  icon: const Icon(Icons.close)),
+            ])));
+  }
+
   Widget _errorView() => Center(
       child: Padding(
           padding: const EdgeInsets.all(24),
@@ -256,6 +311,8 @@ class _HomePageState extends State<HomePage> with WidgetsBindingObserver {
 
   Widget _overview() {
     final summary = data.summary;
+    final alerts = _attentionObservations();
+    final showAlerts = !_alertDismissed && alerts.isNotEmpty;
     return ListView(
         padding: const EdgeInsets.all(20),
         physics: const AlwaysScrollableScrollPhysics(),
@@ -268,6 +325,10 @@ class _HomePageState extends State<HomePage> with WidgetsBindingObserver {
           const SizedBox(height: 6),
           const Text('记录保存在本机 · 无需联网查看'),
           const SizedBox(height: 20),
+          if (showAlerts) ...[
+            _alertCard(alerts),
+            const SizedBox(height: 20)
+          ],
           LayoutBuilder(builder: (context, constraints) {
             final columns = constraints.maxWidth >= 650 ? 4 : 2;
             final width = (constraints.maxWidth - (columns - 1) * 12) / columns;
