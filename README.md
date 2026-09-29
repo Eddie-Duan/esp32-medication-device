@@ -2,7 +2,7 @@
 
 ESP32 用药装置与 Flutter Android App，供 iGEM 原型开发与开源复现。**当前只继续开发 Android；iOS 工程及已有构建记录保留为历史资料，不再作为本轮交付目标。**
 
-**小智路线已调整：目标为官方云服务，不要求团队维护自己的服务器。** 但当前 0.3.0 App 仍只有本地助手和上一阶段写的 Python 网关适配；官方设备激活与 Android 直接连接尚未实现。先看[官方云接入可行性与任务](docs/xiaozhi-official-cloud.md)。
+**关于小智：Android App 不能用 xiaozhi.me 官方云** —— 官方设备激活要求用 ESP32 eFuse 里的 HMAC 密钥对服务器 challenge 签名，手机做不到，而且官方没有给第三方 App 的聊天 API。可用的两条在线路线是：**自建 `xiaozhi-esp32-server` 的智控台**（大模型、知识库/RAG、角色设定都在那里配），或**直连任意 OpenAI 兼容模型 API**。两者本仓库都已支持。详见[接入可行性](docs/xiaozhi-official-cloud.md)。
 
 ## 系统组成
 
@@ -17,12 +17,13 @@ flowchart LR
   DB3 --> UI
   UI --> LOCAL[默认本地规则助手]
   UI -. 当前仅本地运行 .-> LOCAL
-  UI -. 0.3.0 可选旧方案 .-> GW[Python HTTPS 网关]
-  GW -. 自建部署 .-> XZ[社区 xiaozhi-esp32-server]
-  UI -. 新目标：待官方激活方式确认 .-> CLOUD[小智官方云]
+  UI -. 可选在线方式 .-> GW[Python HTTPS 网关]
+  GW -. 自建部署 .-> XZ[社区 xiaozhi-esp32-server<br/>大模型 / 知识库 RAG]
+  GW -. 直连 .-> MODEL[OpenAI 兼容模型 API]
+  UI -. 不可用：需 ESP32 eFuse 签名 .-> CLOUD[小智官方云]
 ```
 
-开源 Android 代码本身不要求团队自建服务器。官方云能否接受本项目 Android 作为独立客户端，还取决于官方支持的设备激活和客户端凭据。仓库之前完成的自建网关代码是可复用的旧方案，但它不是官方服务，也不代表官方云已接通。
+App 侧接口与上游解耦：切换网关上游不需要改 App。官方云这条路线已经核查为**不可用**（需要 ESP32 eFuse 的 HMAC 签名，且官方没有第三方 App 的聊天 API），所以**不要按“等官方云接通”来排期**。
 
 ## 当前完成情况
 
@@ -31,7 +32,7 @@ flowchart LR
 | Android App 0.3.0 | A+B 合并、持久化、演示与设备数据隔离、历史/统计/CSV、权限与生命周期处理 | Android 真机整机验收、正式发布签名 |
 | BLE 原型 | 扫描、连接、Notify、分片与 CRC、文本落库后 ACK/COMMIT、重试与去重 | 与硬件组逐项实测断线、掉电、重传 |
 | 正式事件同步 | 数据模型、事务保存、冲突拒绝、连续位置等 App 基础 | 正式事件解码入库、游标续传、校时、按确认范围回收设备日志 |
-| 文字助手 | 本地摘要；可选在线 Provider、摘要发送确认、错误提示；另有自建网关原型代码 | 按官方认可的设备激活/客户端方式接入官方云；当前无官方账号连接验收 |
+| 文字助手 | 本地规则引擎（9 条规则、可单测）；概览页“需要留意”卡片；可选在线助手（网关支持 `mock` / `xiaozhi` / `llm` 三种上游）、摘要发送确认与错误处理 | 真实模型或自建小智服务的端到端验收；知识库 RAG 联调 |
 | 小智语音 / iOS | 历史或计划资料保留 | 不属于本轮交付 |
 
 **原型时间文本不会自动成为首页、历史和助手的正式事件统计。** 设备使用动作也不等于已确认服药。本项目为科研原型，不提供诊断或剂量调整功能。
@@ -42,8 +43,9 @@ flowchart LR
 - 安装、体验与编译：[Android App 说明](mobile_app/README.md)。
 - 本轮分工与验收：[Android 开发路线](docs/android-roadmap.md)。
 - 连接现有硬件：[A+B 联调说明](docs/member-ab-integration.md)。
-- 官方云接入的限制和后续分工：[官方云接入说明](docs/xiaozhi-official-cloud.md)。
-- 上一阶段自建网关的接口与数据范围：[网关协议](protocol/xiaozhi-bridge.md)、[网关操作说明](server/assistant-gateway/README.md)。
+- 小智能不能用、怎么配 RAG：[接入可行性与限制](docs/xiaozhi-official-cloud.md)。
+- 助手网关的接口与部署（三种上游）：[网关协议](protocol/xiaozhi-bridge.md)、[网关操作说明](server/assistant-gateway/README.md)。
+- 本地规则集与安全边界：[助手规则说明](docs/assistant-local-rules.md)、[助手数据需求](docs/assistant-data-requirements.md)。
 
 ```bash
 git clone https://github.com/zyc-ivsd/esp32-medication-device.git
