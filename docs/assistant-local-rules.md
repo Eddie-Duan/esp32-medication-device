@@ -8,8 +8,8 @@
 AssistantContext（统计摘要）
     ↓
 rules/observation_rules.dart     纯函数规则层，无 Flutter 依赖，可单测
-    ↓
-providers/mock_assistant_provider.dart   按问题路由并组织回答
+    ├──→ providers/mock_assistant_provider.dart   按问题路由并组织回答
+    └──→ pages/home_page.dart                     概览顶部“需要留意”卡片
     ↓
 AssistantPage
 ```
@@ -23,7 +23,7 @@ AssistantPage
 | code | 触发条件 | 级别 | 说明 |
 |---|---|---|---|
 | `no_records` | `totalCount == 0` | info | 直接返回，不再推断其它结论 |
-| `never_synced` | `lastSyncAt == null` | attention | 提示统计只基于本机已有数据 |
+| `never_synced` | `lastSyncAt == null` 且**非演示数据** | attention | 提示无法判断数据新旧 |
 | `blank_days` | 近 7 天存在 0 次的天 | info | 说明当天没有设备动作，**不表述为漏服** |
 | `uneven_days` | 有记录的日之间极差 ≥ 2 | info | 只报波动区间，不下结论 |
 | `recent_gap` | 今天往前连续 ≥ 2 天为 0 | attention | 提示检查电量、按键和蓝牙同步 |
@@ -43,6 +43,16 @@ AssistantPage
 5. 其它 → 摘要 + 提示可切换在线助手
 
 具体回答后只追加 `attention` 级别的观察；`info` 级别的观察只在“建议”入口列出，避免每条回答都变长。
+
+## 演示数据下的行为
+
+演示数据没有设备，而且 `markSyncCompleted()` 会拒绝对演示源写入同步时间，所以：
+
+- **不输出 `never_synced`** —— 对刚导入演示数据的用户说“尚未同步”只会让人困惑；
+- `recent_gap` / `unknown_time` / `future_time` 在演示数据下**只陈述事实，不给设备维护建议**（没有设备可维护）；
+- 设备记录仍然保留这些建议。
+
+概览页的“需要留意”卡片和助手共用这套规则，所以两处文案始终一致。
 
 ## 边界（必须遵守）
 

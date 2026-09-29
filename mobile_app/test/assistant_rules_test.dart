@@ -137,6 +137,47 @@ void main() {
     }
   });
 
+  test('演示数据不提示同步状态，也不给设备维护建议', () {
+    const demo = AssistantContext(
+      totalCount: 5,
+      last7DaysCount: 2,
+      unknownTimeCount: 1,
+      futureTimeCount: 1,
+      dailyCounts: [0, 1, 0, 0, 0, 0, 1],
+      isDemo: true,
+    );
+    final demoObservations = evaluateObservations(demo, now: now);
+    expect(
+      demoObservations.map((item) => item.code),
+      isNot(contains('never_synced')),
+    );
+    for (final observation in demoObservations) {
+      expect(observation.text, isNot(contains('设备校时')));
+      expect(observation.text, isNot(contains('核对设备时间')));
+    }
+
+    const device = AssistantContext(
+      totalCount: 5,
+      last7DaysCount: 2,
+      unknownTimeCount: 1,
+      futureTimeCount: 1,
+      dailyCounts: [0, 1, 0, 0, 0, 0, 1],
+    );
+    final deviceObservations = evaluateObservations(device, now: now);
+    expect(
+      deviceObservations.map((item) => item.code),
+      contains('never_synced'),
+    );
+    expect(
+      deviceObservations.firstWhere((item) => item.code == 'unknown_time').text,
+      contains('设备校时'),
+    );
+    expect(
+      deviceObservations.firstWhere((item) => item.code == 'future_time').text,
+      contains('核对设备时间'),
+    );
+  });
+
   test('本地助手把需要留意的观察追加到具体回答之后', () async {
     final answer = await MockAssistantProvider(now: now).reply(
       question: '今天用了几次？',

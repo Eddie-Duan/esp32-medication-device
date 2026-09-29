@@ -42,10 +42,12 @@ List<AssistantObservation> evaluateObservations(
   final observations = <AssistantObservation>[];
   final windowDays = context.dailyCounts.length;
 
-  if (context.lastSyncAt == null) {
+  // 演示数据没有设备，也永远没有同步时间（markSyncCompleted 对演示源直接拒绝），
+  // 对它提示“尚未同步”只会让人困惑。
+  if (context.lastSyncAt == null && !context.isDemo) {
     observations.add(const AssistantObservation(
       'never_synced',
-      '还没有记录过设备同步时间，下面的统计只基于本机已有数据。',
+      '还没有记录过同步时间，无法判断数据新旧；下面的统计只基于本机已有数据。',
       ObservationLevel.attention,
     ));
   }
@@ -80,28 +82,30 @@ List<AssistantObservation> evaluateObservations(
     trailingBlankDays++;
   }
   if (trailingBlankDays >= 2) {
+    // 演示数据里没有可操作的装置，只陈述事实，不给硬件维护建议。
+    final advice =
+        context.isDemo ? '' : '若装置仍在使用，建议检查电量、按键和蓝牙同步是否正常。';
     observations.add(AssistantObservation(
       'recent_gap',
-      '到今天为止已连续 $trailingBlankDays 天没有设备记录。'
-          '若装置仍在使用，建议检查电量、按键和蓝牙同步是否正常。',
+      '到今天为止已连续 $trailingBlankDays 天没有设备记录。$advice',
       ObservationLevel.attention,
     ));
   }
 
   if (context.unknownTimeCount > 0) {
+    final advice = context.isDemo ? '' : '，建议为设备校时后重新同步';
     observations.add(AssistantObservation(
       'unknown_time',
-      '有 ${context.unknownTimeCount} 条记录缺少时间信息，无法计入按日统计，'
-          '建议为设备校时后重新同步。',
+      '有 ${context.unknownTimeCount} 条记录缺少时间信息，无法计入按日统计$advice。',
       ObservationLevel.attention,
     ));
   }
 
   if (context.futureTimeCount > 0) {
+    final advice = context.isDemo ? '' : '，建议核对设备时间设置';
     observations.add(AssistantObservation(
       'future_time',
-      '有 ${context.futureTimeCount} 条记录的时间晚于当前时间，已排除在按日统计之外，'
-          '建议核对设备时间设置。',
+      '有 ${context.futureTimeCount} 条记录的时间晚于当前时间，已排除在按日统计之外$advice。',
       ObservationLevel.attention,
     ));
   }
