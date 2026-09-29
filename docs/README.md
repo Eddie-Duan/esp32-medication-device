@@ -7,6 +7,8 @@
 - [小智接入开发交接](xiaozhi-developer-handoff.md)：推荐分支、代码入口和验收边界。
 - [A+B 硬件联调说明](member-ab-integration.md)：现有 BLE 原型操作。
 - [正式数据层接口](member-a-handoff.md)：供正式协议接入参考。
+- [本地专家 / 联网大模型接入与边界](assistant-model-access.md)：两种在线方式、两类 API Key、RAG 待决选项。
+- [助手本地规则与安全红线](assistant-local-rules.md)：九条规则、演示数据行为、禁用词。
 - [App 安装与构建](../mobile_app/README.md)。
 - [自建小智网关操作](../server/assistant-gateway/README.md)。
 - [助手请求与上游协议](../protocol/xiaozhi-bridge.md)。

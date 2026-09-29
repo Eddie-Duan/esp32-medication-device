@@ -46,6 +46,7 @@ App 侧接口与上游解耦：切换网关上游不需要改 App。官方云这
 - 小智能不能用、怎么配 RAG：[接入可行性与限制](docs/xiaozhi-official-cloud.md)。
 - 助手网关的接口与部署（三种上游）：[网关协议](protocol/xiaozhi-bridge.md)、[网关操作说明](server/assistant-gateway/README.md)。
 - 本地规则集与安全边界：[助手规则说明](docs/assistant-local-rules.md)、[助手数据需求](docs/assistant-data-requirements.md)。
+- 本地专家 vs 联网大模型（含用户自带 Key 的规则）：[模型接入与边界](docs/assistant-model-access.md)。
 
 ```bash
 git clone https://github.com/zyc-ivsd/esp32-medication-device.git
