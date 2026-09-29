@@ -121,6 +121,28 @@ void main() {
     },
   );
 
+  test('an llm provider answer is shown without a demo prefix', () async {
+    await withServer(
+      (request) async {
+        request.response.headers.contentType = ContentType.json;
+        request.response.write(
+          jsonEncode({
+            'schema_version': 1,
+            'answer': '近 7 天共 8 次使用动作，有 2 天没有设备记录。',
+            'provider': 'llm',
+          }),
+        );
+        await request.response.close();
+      },
+      (endpoint) async {
+        final answer = await GatewayAssistantProvider(endpoint: endpoint)
+            .reply(question: '有什么建议？', context: context);
+        expect(answer, '近 7 天共 8 次使用动作，有 2 天没有设备记录。');
+        expect(answer, isNot(contains('尚未调用小智')));
+      },
+    );
+  });
+
   test(
     'HTTP auth errors do not expose upstream payloads and redirects are not followed',
     () async {

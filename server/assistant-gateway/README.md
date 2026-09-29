@@ -77,7 +77,37 @@ $env:GATEWAY_TOKEN = '<至少24位的随机网关访问码>'
 
 Linux 用同名 `export NAME='value'`，再执行 `.venv/bin/python gateway.py`。公开访问时保持单进程、一个专用上游身份；生产化多人服务需另做账号、身份与记忆隔离，不能通过直接多开进程实现。
 
-## 4. 联调验收
+## 4. 另一种方式：直连模型 API，不需要小智服务端
+
+如果只是想让在线助手用上大模型，**不必部署 `xiaozhi-esp32-server`**。`GATEWAY_MODE=llm` 直接调用 **OpenAI 兼容**的 `/chat/completions`，任何兼容接口都可以（DeepSeek、阿里百炼、火山、智谱、本地 Ollama 等）。
+
+**模型 API Key 只配在这里，不要写进 App、APK、构建参数或仓库。** App 永远只拿网关访问码。
+
+| 配置 | 说明 |
+|---|---|
+| `GATEWAY_MODE` | 设为 `llm` |
+| `LLM_BASE_URL` | 写到 `/chat/completions` **之前**，例如 `https://api.deepseek.com/v1`、本地 Ollama `http://127.0.0.1:11434/v1` |
+| `LLM_API_KEY` | 模型平台签发的 Key |
+| `LLM_MODEL` | 模型名，例如 `deepseek-chat`、`qwen-plus`、`llama3.1` |
+| `GATEWAY_TOKEN` | 另外生成的网关访问码；**App 里填的是这个，不是模型 Key** |
+
+```powershell
+$env:GATEWAY_MODE = 'llm'
+$env:LLM_BASE_URL = 'https://api.deepseek.com/v1'
+$env:LLM_API_KEY = '<模型平台密钥>'
+$env:LLM_MODEL = 'deepseek-chat'
+$env:GATEWAY_TOKEN = '<至少24位的随机网关访问码>'
+.\.venv\Scripts\python.exe gateway.py
+```
+
+约束：
+
+- `LLM_BASE_URL` 必须是 `https`；**只有**指向 `127.0.0.1` / `localhost` 时才允许 `http`（本地模型服务）。非回环用 http 会在启动时直接报错。
+- 请求无状态：每次提问都是独立会话，不发送历史对话。system 提示词写在 `gateway.py` 的 `SYSTEM_PROMPT`，模型只负责把统计摘要说成通顺中文，禁止诊断、剂量建议和工具调用。
+- 上游失败（401/429/非 JSON/空回复/超长）一律返回 `502`，**不会退回 mock 伪造成功**。
+- 返回给 App 的 `provider` 是 `llm`。
+
+## 5. 联调验收
 
 | 操作 | 预期 |
 |---|---|
@@ -93,7 +123,7 @@ Linux 用同名 `export NAME='value'`，再执行 `.venv/bin/python gateway.py`�
 
 `python -m unittest discover -s tests -v` 会在本机启动模拟 WebSocket 服务，验证握手、鉴权转发、文字聚合、二进制丢弃、错误、超时与并发；**它不证明真实小智服务器或模型已通过**。
 
-## 5. 实现范围
+## 6. 实现范围
 
 协议、字段及核对的上游提交见 [xiaozhi-bridge.md](../../protocol/xiaozhi-bridge.md)。默认上游总超时 45 秒，只上传单次问题与摘要，无历史对话重发；每次请求新建上游连接，但上游是否持久记忆仍由部署配置决定。
 

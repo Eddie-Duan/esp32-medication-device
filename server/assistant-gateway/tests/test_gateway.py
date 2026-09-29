@@ -21,6 +21,7 @@ class GatewayTests(unittest.IsolatedAsyncioTestCase):
     async def asyncSetUp(self):
         self.resources = []
         self.requests = []
+        self.llm_requests = []
         self.upstream_started = asyncio.Event()
         self.upstream_release = asyncio.Event()
 
@@ -73,6 +74,29 @@ class GatewayTests(unittest.IsolatedAsyncioTestCase):
         await server.start_server()
         self.resources.append(server)
         return str(server.make_url("/xiaozhi/v1/")).replace("http://", "ws://", 1)
+
+    async def llm_upstream(self, scenario="normal"):
+        async def handler(request):
+            body = await request.json()
+            self.llm_requests.append({"headers": dict(request.headers), "body": body})
+            if scenario == "unauthorized":
+                return web.json_response({"error": "private-token"}, status=401)
+            if scenario == "busy":
+                return web.json_response({"error": "private-token"}, status=429)
+            if scenario == "invalid":
+                return web.Response(text="private-token", content_type="text/plain")
+            if scenario == "empty":
+                return web.json_response({"choices": []})
+            if scenario == "blank":
+                return web.json_response({"choices": [{"message": {"content": "   "}}]})
+            return web.json_response({"choices": [{"message": {"content": "已读取摘要。"}}]})
+
+        app = web.Application()
+        app.router.add_post("/v1/chat/completions", handler)
+        server = TestServer(app)
+        await server.start_server()
+        self.resources.append(server)
+        return str(server.make_url("/v1")).rstrip("/")
 
     async def test_mock_is_explicit_and_health_does_not_claim_upstream_readiness(self):
         client = await self.gateway()
@@ -172,10 +196,57 @@ class GatewayTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual((await first).status, 200)
         self.assertEqual(len(self.requests), 1)
 
+    async def test_llm_mode_keeps_the_key_on_the_server(self):
+        base = await self.llm_upstream()
+        client = await self.gateway(mode="llm", llm_base_url=base,
+                                    llm_api_key="model-private-key", llm_model="test-model")
+        result = await (await client.post("/v1/assistant/chat", json=payload())).json()
+        self.assertEqual(result["provider"], "llm")
+        self.assertEqual(result["answer"], "已读取摘要。")
+        request = self.llm_requests[0]
+        self.assertEqual(request["headers"]["Authorization"], "Bearer model-private-key")
+        self.assertEqual(request["body"]["model"], "test-model")
+        self.assertEqual([m["role"] for m in request["body"]["messages"]], ["system", "user"])
+        sent = json.loads(request["body"]["messages"][1]["content"])
+        self.assertEqual(sent["context"], payload()["context"])
+        # The model credential must never reach the App.
+        self.assertNotIn("model-private-key", json.dumps(result))
+
+    async def test_llm_failures_never_return_partial_or_mock_success(self):
+        for scenario in ["unauthorized", "busy", "invalid", "empty", "blank"]:
+            with self.subTest(scenario=scenario):
+                base = await self.llm_upstream(scenario)
+                client = await self.gateway(mode="llm", llm_base_url=base,
+                                            llm_api_key="model-private-key", llm_model="test-model")
+                response = await client.post("/v1/assistant/chat", json=payload())
+                self.assertEqual(response.status, 502)
+                text = await response.text()
+                self.assertNotIn('"answer"', text)
+                self.assertNotIn("private-token", text)
+
     def test_external_binding_requires_gateway_auth_and_real_mode_requires_upstream(self):
         for settings in [Settings(host="0.0.0.0"), Settings(mode="xiaozhi"), Settings(token="bad\nheader")]:
             with self.assertRaises(ValueError):
                 settings.validate()
+
+    def test_llm_mode_requires_a_safe_base_url_and_credentials(self):
+        rejected = [
+            Settings(mode="llm"),
+            Settings(mode="llm", llm_base_url="http://example.com/v1", llm_api_key="k", llm_model="m"),
+            Settings(mode="llm", llm_base_url="https://u:p@example.com/v1", llm_api_key="k", llm_model="m"),
+            Settings(mode="llm", llm_base_url="https://example.com/v1", llm_api_key="", llm_model="m"),
+            Settings(mode="llm", llm_base_url="https://example.com/v1", llm_api_key="k", llm_model=""),
+            Settings(mode="llm", llm_base_url="https://example.com/v1", llm_api_key="bad\nkey", llm_model="m"),
+        ]
+        for settings in rejected:
+            with self.subTest(settings=settings):
+                with self.assertRaises(ValueError):
+                    settings.validate()
+        Settings(mode="llm", llm_base_url="https://example.com/v1",
+                 llm_api_key="k", llm_model="m").validate()
+        # A local model server (Ollama and friends) may use plain http on loopback.
+        Settings(mode="llm", llm_base_url="http://127.0.0.1:11434/v1",
+                 llm_api_key="k", llm_model="m").validate()
 
 
 if __name__ == "__main__":

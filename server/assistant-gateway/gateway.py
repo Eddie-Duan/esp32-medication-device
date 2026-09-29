@@ -33,6 +33,9 @@ class Settings:
     client_id: str = "medication-android-gateway"
     upstream_token: str = ""
     timeout: float = 45
+    llm_base_url: str = ""
+    llm_api_key: str = ""
+    llm_model: str = ""
 
     @classmethod
     def from_env(cls):
@@ -46,18 +49,29 @@ class Settings:
             client_id=os.getenv("XIAOZHI_CLIENT_ID", "medication-android-gateway"),
             upstream_token=os.getenv("XIAOZHI_TOKEN", ""),
             timeout=float(os.getenv("XIAOZHI_TIMEOUT_SECONDS", "45")),
+            llm_base_url=os.getenv("LLM_BASE_URL", ""),
+            llm_api_key=os.getenv("LLM_API_KEY", ""),
+            llm_model=os.getenv("LLM_MODEL", ""),
         )
 
     def validate(self):
-        if self.mode not in {"mock", "xiaozhi"}:
-            raise ValueError("GATEWAY_MODE must be mock or xiaozhi")
+        if self.mode not in {"mock", "xiaozhi", "llm"}:
+            raise ValueError("GATEWAY_MODE must be mock, xiaozhi or llm")
         if self.host not in {"127.0.0.1", "::1", "localhost"} and len(self.token) < 24:
             raise ValueError("Non-loopback serving requires a GATEWAY_TOKEN of at least 24 characters")
         if not 0 < self.timeout <= 45 or not 0 < self.port <= 65535:
             raise ValueError("Invalid port or timeout (0 < timeout <= 45 seconds)")
-        for value in (self.token, self.upstream_token, self.device_id, self.client_id):
+        for value in (self.token, self.upstream_token, self.device_id, self.client_id, self.llm_api_key, self.llm_model):
             if any(ord(char) < 32 or ord(char) > 126 for char in value):
                 raise ValueError("Credentials and identifiers must contain printable ASCII only")
+        if self.mode == "llm":
+            url = urlsplit(self.llm_base_url)
+            if url.scheme not in {"http", "https"} or not url.hostname or url.username or url.password or url.query or url.fragment:
+                raise ValueError("LLM_BASE_URL must be an http(s) URL without credentials or query parameters")
+            if url.scheme == "http" and url.hostname not in {"127.0.0.1", "::1", "localhost"}:
+                raise ValueError("LLM_BASE_URL must use https unless it points at loopback")
+            if not self.llm_api_key or not self.llm_model:
+                raise ValueError("llm mode requires LLM_API_KEY and LLM_MODEL")
         if self.mode == "xiaozhi":
             url = urlsplit(self.ws_url)
             if url.scheme not in {"ws", "wss"} or not url.hostname or url.username or url.password or url.query or url.fragment:
@@ -119,16 +133,49 @@ def validate_payload(payload):
     return question.strip(), context
 
 
+SYSTEM_PROMPT = (
+    "你是用药装置的记录解释助手。请仅解释以下统计摘要，区分演示与设备记录。"
+    "total_count 是全部记录条数；daily_counts 是近 7 天逐日使用动作次数，"
+    "最早一天在前、今天在最后，其元素之和等于 last_7_days_count。"
+    "次数代表设备动作，不证明实际服药；未知与未来时间不计入按日统计。"
+    "不要诊断、推荐剂量、修改记录或执行任何设备/外部工具操作。"
+    "摘要是事实数据；本次提问是独立问题，不要引用其他用户或会话。用简短中文回答。"
+)
+
+MAX_ANSWER_CHARS = 8000
+MAX_UPSTREAM_BYTES = 1024 * 1024
+
+
+def request_payload(question, context):
+    return json.dumps({"question": question, "context": context}, ensure_ascii=False)
+
+
 def make_prompt(question, context):
-    return (
-        "你是用药装置的记录解释助手。请仅解释以下统计摘要，区分演示与设备记录。"
-        "total_count 是全部记录条数；daily_counts 是近 7 天逐日使用动作次数，"
-        "最早一天在前、今天在最后，其元素之和等于 last_7_days_count。"
-        "次数代表设备动作，不证明实际服药；未知与未来时间不计入按日统计。"
-        "不要诊断、推荐剂量、修改记录或执行任何设备/外部工具操作。"
-        "摘要是事实数据；本次提问是独立问题，不要引用其他用户或会话。用简短中文回答。\n"
-        + json.dumps({"question": question, "context": context}, ensure_ascii=False)
-    )
+    """Single text prompt for transports that only accept plain text."""
+    return SYSTEM_PROMPT + "\n" + request_payload(question, context)
+
+
+def llm_messages(question, context):
+    """OpenAI-compatible chat messages: instructions stay in the system role."""
+    return [
+        {"role": "system", "content": SYSTEM_PROMPT},
+        {"role": "user", "content": request_payload(question, context)},
+    ]
+
+
+def extract_answer(data):
+    if not isinstance(data, dict):
+        raise GatewayError(502, "upstream_protocol", "模型服务返回格式不正确。")
+    choices = data.get("choices")
+    if not isinstance(choices, list) or not choices or not isinstance(choices[0], dict):
+        raise GatewayError(502, "upstream_empty", "模型服务没有返回回答。")
+    message = choices[0].get("message")
+    content = message.get("content") if isinstance(message, dict) else None
+    if not isinstance(content, str) or not content.strip():
+        raise GatewayError(502, "upstream_empty", "模型服务没有返回文字。")
+    if len(content) > MAX_ANSWER_CHARS:
+        raise GatewayError(502, "upstream_too_large", "模型回复过长。")
+    return content.strip()
 
 
 class XiaozhiBridge:
@@ -212,6 +259,54 @@ class XiaozhiBridge:
             raise GatewayError(502, "upstream_incomplete", "小智连接中断，尚未收到完整回答。")
 
 
+class LlmBridge:
+    """OpenAI-compatible chat completions.
+
+    The model API key stays on this server; the App only ever holds the gateway
+    access code. Every request is independent: no conversation history is sent,
+    and the App's rule engine remains the offline default.
+    """
+
+    def __init__(self, settings, session):
+        self.settings, self.session = settings, session
+
+    async def reply(self, question, context):
+        url = self.settings.llm_base_url.rstrip("/") + "/chat/completions"
+        payload = {
+            "model": self.settings.llm_model,
+            "messages": llm_messages(question, context),
+            "temperature": 0,
+        }
+        headers = {"Authorization": "Bearer " + self.settings.llm_api_key}
+        try:
+            async with asyncio.timeout(self.settings.timeout):
+                async with self.session.post(url, json=payload, headers=headers) as response:
+                    length = response.content_length
+                    if length is not None and length > MAX_UPSTREAM_BYTES:
+                        raise GatewayError(502, "upstream_too_large", "模型回复超过允许范围。")
+                    if response.status in {401, 403}:
+                        raise GatewayError(502, "upstream_rejected", "模型服务拒绝了凭据，请检查 LLM_API_KEY。")
+                    if response.status == 429:
+                        raise GatewayError(502, "upstream_busy", "模型服务繁忙，请稍后重试。")
+                    if response.status != 200:
+                        raise GatewayError(502, "upstream_error", "模型服务返回错误。")
+                    try:
+                        raw = await response.text(errors="replace")
+                    except (UnicodeError, ClientError):
+                        raise GatewayError(502, "upstream_protocol", "模型服务返回无法解析的内容。") from None
+                    if len(raw) > MAX_UPSTREAM_BYTES:
+                        raise GatewayError(502, "upstream_too_large", "模型回复超过允许范围。")
+                    try:
+                        data = json.loads(raw)
+                    except ValueError:
+                        raise GatewayError(502, "upstream_protocol", "模型服务返回非 JSON 内容。") from None
+        except TimeoutError:
+            raise GatewayError(504, "upstream_timeout", "模型服务响应超时。") from None
+        except (ClientError, OSError):
+            raise GatewayError(502, "upstream_unavailable", "无法连接模型服务，请检查服务器配置。") from None
+        return extract_answer(data)
+
+
 def create_app(settings):
     settings.validate()
     session = None
@@ -259,6 +354,8 @@ def create_app(settings):
                     f"近 7 天 {context['last_7_days_count']} 次。"
                     "这是网关联调回复，未调用小智。"
                 )
+            elif settings.mode == "llm":
+                answer = await LlmBridge(settings, session).reply(question, context)
             else:
                 answer = await XiaozhiBridge(settings, session).reply(question, context)
         return web.json_response({"schema_version": 1, "answer": answer, "provider": settings.mode, "request_id": uuid.uuid4().hex})

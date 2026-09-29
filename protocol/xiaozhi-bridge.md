@@ -1,8 +1,16 @@
-# Android → 自建小智：文字助手协议 v1
+# Android → 助手网关：文字助手协议 v1
 
-> 本文记录上一阶段自建 `xiaozhi-esp32-server` 的适配方案。团队已改为希望接小智官方云；本文 `/v1/assistant/chat`、自建服务器 WebSocket 不能直接当作官方云 API。官方接入待确认，详见[官方云说明](../docs/xiaozhi-official-cloud.md)。
+> `/v1/assistant/chat` 是**本仓库实现的网关接口**，既不是小智官方 API，也不是任何一个上游提供的 REST API。官方云接入待确认，详见[官方云说明](../docs/xiaozhi-official-cloud.md)。
 
-本轮目标是 `xinnan-tech/xiaozhi-esp32-server`。`POST /v1/assistant/chat` 是**本仓库实现的网关接口**，不是上游提供的 REST API。
+网关有三种上游模式，**App 侧接口完全相同**，切换模式不需要改 App：
+
+| `GATEWAY_MODE` | 上游 | 用途 |
+|---|---|---|
+| `mock` | 无 | 只验证 App → 网关链路；回复明确标记未调用模型 |
+| `xiaozhi` | 自建 `xinnan-tech/xiaozhi-esp32-server` 的 WebSocket | 复用社区语音服务端的知识库与角色设定 |
+| `llm` | **OpenAI 兼容的 `/chat/completions`** | 直连模型 API，不需要部署小智服务端 |
+
+上游凭据（小智 Token 或模型 API Key）**只存在于网关**；App 输入的是另外生成的网关访问码。
 
 ```text
 AssistantPage → AssistantService → GatewayAssistantProvider
@@ -51,7 +59,7 @@ Authorization: Bearer <网关访问码；启用鉴权时必填>
 }
 ```
 
-`provider=mock` 明确表示未调用小智，App 会追加演示标记；网关不会在小智失败时退回 mock。小智文本上限 8000 字；App HTTP 响应上限 64 KiB。
+`provider` 取值为 `mock` / `xiaozhi` / `llm`，App 只用它区分展示：`mock` 会追加演示标记，其余原样显示。网关**不会**在真实上游失败时退回 `mock`。上游文本上限 8000 字；App HTTP 响应上限 64 KiB。
 
 | HTTP | 含义 |
 |---|---|

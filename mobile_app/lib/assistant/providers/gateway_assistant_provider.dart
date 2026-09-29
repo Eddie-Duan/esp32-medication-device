@@ -122,7 +122,7 @@ class GatewayAssistantProvider implements AssistantProvider {
         data['schema_version'] != 1 ||
         data['answer'] is! String ||
         (data['answer'] as String).trim().isEmpty ||
-        !const ['mock', 'xiaozhi'].contains(data['provider'])) {
+        !const ['mock', 'xiaozhi', 'llm'].contains(data['provider'])) {
       throw const AssistantException('在线助手返回格式不正确，请联系服务管理员。');
     }
     final answer = (data['answer'] as String).trim();
