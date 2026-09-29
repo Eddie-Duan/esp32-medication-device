@@ -4,10 +4,10 @@ import 'dart:io';
 
 import 'package:flutter/foundation.dart';
 
-import 'assistant_exception.dart';
-import 'assistant_prompt.dart';
-import 'assistant_provider.dart';
-import 'models/assistant_context.dart';
+import '../assistant_exception.dart';
+import '../assistant_prompt.dart';
+import '../assistant_provider.dart';
+import '../models/assistant_context.dart';
 
 /// 用**用户自己**的 API Key 直连 OpenAI 兼容接口。
 ///
