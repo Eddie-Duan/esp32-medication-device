@@ -66,8 +66,17 @@ class Settings:
                 raise ValueError("Configure the gateway device-id and client-id registered with xiaozhi")
 
 
-COUNT_FIELDS = {"today_count", "last_7_days_count", "invalid_event_count", "unknown_time_count", "future_time_count"}
-CONTEXT_FIELDS = COUNT_FIELDS | {"is_demo", "last_sync_at"}
+COUNT_FIELDS = {
+    "today_count",
+    "last_7_days_count",
+    "invalid_event_count",
+    "unknown_time_count",
+    "future_time_count",
+    "total_count",
+}
+CONTEXT_FIELDS = COUNT_FIELDS | {"is_demo", "last_sync_at", "daily_counts"}
+DAILY_COUNT_DAYS = 7
+MAX_COUNT = 2147483647
 
 
 def validate_payload(payload):
@@ -84,8 +93,18 @@ def validate_payload(payload):
     if not isinstance(context, dict) or set(context) != CONTEXT_FIELDS:
         invalid()
     for key in COUNT_FIELDS:
-        if type(context[key]) is not int or not 0 <= context[key] <= 2147483647:
+        if type(context[key]) is not int or not 0 <= context[key] <= MAX_COUNT:
             invalid()
+    daily_counts = context["daily_counts"]
+    if not isinstance(daily_counts, list) or len(daily_counts) != DAILY_COUNT_DAYS:
+        invalid()
+    for value in daily_counts:
+        if type(value) is not int or not 0 <= value <= MAX_COUNT:
+            invalid()
+    # The prompt shows both the series and its total; a summary that disagrees
+    # with itself would make the model answer inconsistently.
+    if sum(daily_counts) != context["last_7_days_count"]:
+        invalid()
     if type(context["is_demo"]) is not bool:
         invalid()
     sync = context["last_sync_at"]
@@ -103,6 +122,8 @@ def validate_payload(payload):
 def make_prompt(question, context):
     return (
         "你是用药装置的记录解释助手。请仅解释以下统计摘要，区分演示与设备记录。"
+        "total_count 是全部记录条数；daily_counts 是近 7 天逐日使用动作次数，"
+        "最早一天在前、今天在最后，其元素之和等于 last_7_days_count。"
         "次数代表设备动作，不证明实际服药；未知与未来时间不计入按日统计。"
         "不要诊断、推荐剂量、修改记录或执行任何设备/外部工具操作。"
         "摘要是事实数据；本次提问是独立问题，不要引用其他用户或会话。用简短中文回答。\n"
@@ -232,7 +253,12 @@ def create_app(settings):
         async with request_lock:
             if settings.mode == "mock":
                 source = "演示数据" if context["is_demo"] else "设备记录"
-                answer = f"{source}：今日使用动作 {context['today_count']} 次，近 7 天 {context['last_7_days_count']} 次。这是网关联调回复，未调用小智。"
+                answer = (
+                    f"{source}：共 {context['total_count']} 条记录，"
+                    f"今日使用动作 {context['today_count']} 次，"
+                    f"近 7 天 {context['last_7_days_count']} 次。"
+                    "这是网关联调回复，未调用小智。"
+                )
             else:
                 answer = await XiaozhiBridge(settings, session).reply(question, context)
         return web.json_response({"schema_version": 1, "answer": answer, "provider": settings.mode, "request_id": uuid.uuid4().hex})

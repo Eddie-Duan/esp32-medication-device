@@ -27,6 +27,8 @@ void main() {
     todayCount: 2,
     last7DaysCount: 8,
     isDemo: true,
+    totalCount: 21,
+    dailyCounts: [0, 1, 0, 2, 0, 0, 5],
   );
 
   test('HTTPS is required outside explicit loopback debug transport', () {
@@ -84,6 +86,15 @@ void main() {
               jsonDecode(await utf8.decoder.bind(request).join()) as Map;
           expect(data.keys.toSet(), {'schema_version', 'question', 'context'});
           expect(data['context'], context.toJson());
+          final wireContext = data['context'] as Map;
+          expect(wireContext['daily_counts'], [0, 1, 0, 2, 0, 0, 5]);
+          expect(wireContext['total_count'], 21);
+          // The gateway rejects summaries whose series contradicts the total.
+          expect(
+            (wireContext['daily_counts'] as List)
+                .fold<int>(0, (sum, count) => sum + (count as int)),
+            wireContext['last_7_days_count'],
+          );
           request.response.headers.contentType = ContentType.json;
           request.response.write(
             jsonEncode({

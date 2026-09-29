@@ -12,7 +12,8 @@ def payload():
     return {
         "schema_version": 1, "question": "最近记录如何？",
         "context": {"today_count": 2, "last_7_days_count": 8, "invalid_event_count": 1,
-                    "last_sync_at": None, "is_demo": True, "unknown_time_count": 1, "future_time_count": 0},
+                    "last_sync_at": None, "is_demo": True, "unknown_time_count": 1, "future_time_count": 0,
+                    "total_count": 21, "daily_counts": [0, 1, 0, 2, 0, 0, 5]},
     }
 
 
@@ -81,6 +82,7 @@ class GatewayTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(result["provider"], "mock")
         self.assertIn("未调用小智", result["answer"])
         self.assertIn("8", result["answer"])
+        self.assertIn("21", result["answer"])
         health = await (await client.get("/healthz")).json()
         self.assertFalse(health["upstream_verified"])
 
@@ -101,6 +103,20 @@ class GatewayTests(unittest.IsolatedAsyncioTestCase):
         item = payload(); item["context"]["today_count"] = -1; cases.append(item)
         item = payload(); item["context"]["last_sync_at"] = "2026-09-23"; cases.append(item)
         item = payload(); item["question"] = "x" * 1001; cases.append(item)
+        for item in cases:
+            with self.subTest(item=item):
+                response = await client.post("/v1/assistant/chat", json=item)
+                self.assertEqual(response.status, 400)
+
+    async def test_rejects_daily_series_that_disagrees_with_its_total(self):
+        client = await self.gateway()
+        cases = []
+        item = payload(); item["context"]["daily_counts"] = [0, 1, 0, 2, 0, 0]; cases.append(item)
+        item = payload(); item["context"]["daily_counts"] = "0" * 7; cases.append(item)
+        item = payload(); item["context"]["daily_counts"] = [0, 1, 0, 2, 0, 0, True]; cases.append(item)
+        item = payload(); item["context"]["daily_counts"] = [0, 1, 0, 2, 0, 0, -1]; cases.append(item)
+        # Seven valid integers whose sum contradicts last_7_days_count.
+        item = payload(); item["context"]["daily_counts"] = [0, 0, 0, 0, 0, 0, 0]; cases.append(item)
         for item in cases:
             with self.subTest(item=item):
                 response = await client.post("/v1/assistant/chat", json=item)
