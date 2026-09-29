@@ -126,7 +126,16 @@ List<AssistantObservation> evaluateObservations(
     final staleDays = DateTime(localNow.year, localNow.month, localNow.day)
         .difference(DateTime(lastSync.year, lastSync.month, lastSync.day))
         .inDays;
-    if (staleDays >= syncStaleAfterDays) {
+    if (staleDays < 0) {
+      // 同步时间在未来时差值为负，stale_sync 会静默不触发；而 future_time 只看
+      // 记录时间、不看同步时间，所以设备时间被设错时原本不会有任何提示。
+      final advice = context.isDemo ? '' : '，建议核对设备时间设置后重新同步';
+      observations.add(AssistantObservation(
+        'future_sync',
+        '同步时间晚于当前时间，按日统计可能不准确$advice。',
+        ObservationLevel.attention,
+      ));
+    } else if (staleDays >= syncStaleAfterDays) {
       observations.add(AssistantObservation(
         'stale_sync',
         '距上次同步已 $staleDays 天，统计可能不含最新记录，'

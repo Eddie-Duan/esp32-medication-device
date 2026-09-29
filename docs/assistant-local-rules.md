@@ -31,6 +31,7 @@ AssistantPage
 | `future_time` | `futureTimeCount > 0` | attention | 建议核对设备时间设置 |
 | `invalid_events` | `invalidEventCount > 0` | attention | 指向历史记录查看原始信息 |
 | `stale_sync` | 距上次同步 ≥ `syncStaleAfterDays`(3) 个日历天 | attention | 提示统计可能不含最新记录 |
+| `future_sync` | `lastSyncAt` 晚于当前时间 | attention | 设备时间可能设错；此时差值为负，`stale_sync` 不会触发，必须由本项兜住 |
 
 ## 问题路由
 

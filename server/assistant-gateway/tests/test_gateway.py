@@ -1,11 +1,13 @@
 import asyncio
 import json
 import unittest
+from unittest import mock
 
 from aiohttp import web
 from aiohttp.test_utils import TestClient, TestServer
 
-from gateway import Settings, create_app
+import gateway
+from gateway import CONTEXT_FIELDS, Settings, create_app
 
 
 def payload():
@@ -117,6 +119,37 @@ class GatewayTests(unittest.IsolatedAsyncioTestCase):
         self.assertNotIn("gateway-private-code", await response.text())
         response = await client.post("/v1/assistant/chat", json=payload(), headers={"Authorization": "Bearer gateway-private-code"})
         self.assertEqual(response.status, 200)
+
+    async def test_every_response_carries_a_traceable_request_id(self):
+        client = await self.gateway(token="gateway-private-code")
+        allowed = await (await client.post(
+            "/v1/assistant/chat", json=payload(),
+            headers={"Authorization": "Bearer gateway-private-code"})).json()
+        denied = await (await client.post("/v1/assistant/chat", json=payload())).json()
+        for result in (allowed, denied):
+            self.assertRegex(result["request_id"], r"^[0-9a-f]{32}$")
+        self.assertNotEqual(allowed["request_id"], denied["request_id"])
+
+    async def test_unexpected_failures_still_return_json_with_a_request_id(self):
+        client = await self.gateway()
+        with mock.patch.object(gateway, "validate_payload", side_effect=RuntimeError("private-token")):
+            response = await client.post("/v1/assistant/chat", json=payload())
+        # An HTML 500 would reach the App as "invalid format", hiding the fault.
+        self.assertEqual(response.status, 500)
+        self.assertEqual(response.content_type, "application/json")
+        result = await response.json()
+        self.assertEqual(result["error"]["code"], "internal_error")
+        self.assertRegex(result["request_id"], r"^[0-9a-f]{32}$")
+        self.assertNotIn("private-token", json.dumps(result))
+
+    def test_context_fields_match_the_app_contract(self):
+        # Deliberately a literal, and duplicated on the Dart side: the App builds
+        # this object and the gateway rejects unknown or missing keys, so a rename
+        # on either side must fail here rather than only on a real phone.
+        self.assertEqual(CONTEXT_FIELDS, {
+            "today_count", "last_7_days_count", "invalid_event_count", "unknown_time_count",
+            "future_time_count", "total_count", "is_demo", "last_sync_at", "daily_counts",
+        })
 
     async def test_rejects_raw_records_unknown_fields_invalid_counts_and_bad_date(self):
         client = await self.gateway()

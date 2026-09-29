@@ -175,6 +175,59 @@ void main() {
     },
   );
 
+  test('failures surface the gateway request id but not the error body', () async {
+    await withServer(
+      (request) async {
+        request.response.statusCode = 502;
+        request.response.headers.contentType = ContentType.json;
+        request.response.write(jsonEncode({
+          'error': {
+            'code': 'upstream_protocol',
+            'message': 'private-upstream-detail',
+          },
+          'request_id': 'abcdef0123456789abcdef0123456789',
+        }));
+        await request.response.close();
+      },
+      (endpoint) async {
+        try {
+          await GatewayAssistantProvider(
+            endpoint: endpoint,
+          ).reply(question: '次数？', context: context);
+          fail('Expected a sanitized failure');
+        } on AssistantException catch (error) {
+          // 用户能凭编号报问题，但看不到上游自己的说明。
+          expect(error.requestId, 'abcdef0123456789abcdef0123456789');
+          expect(error.message, contains('请求编号'));
+          expect(error.message, isNot(contains('private-upstream-detail')));
+          expect(error.message, isNot(contains('upstream_protocol')));
+        }
+      },
+    );
+  });
+
+  test('a failure without a request id keeps the plain message', () async {
+    await withServer(
+      (request) async {
+        // 没有 request_id，甚至根本不是 JSON。
+        request.response.statusCode = 500;
+        request.response.write('<html>gateway error</html>');
+        await request.response.close();
+      },
+      (endpoint) async {
+        try {
+          await GatewayAssistantProvider(
+            endpoint: endpoint,
+          ).reply(question: '次数？', context: context);
+          fail('Expected a sanitized failure');
+        } on AssistantException catch (error) {
+          expect(error.requestId, isNull);
+          expect(error.message, '在线助手暂时不可用，请稍后重试或切回本地摘要。');
+        }
+      },
+    );
+  });
+
   test(
     'invalid, empty and oversized JSON responses fail without a local fallback',
     () async {
@@ -224,7 +277,7 @@ void main() {
     });
   });
 
-  testWidgets('online setup requires consent before enabling a gateway', (
+  testWidgets('online setup requires consent before saving a gateway', (
     tester,
   ) async {
     await tester.pumpWidget(
@@ -232,14 +285,15 @@ void main() {
     );
     expect(
       tester
-          .widget<FilledButton>(find.widgetWithText(FilledButton, '启用在线助手'))
+          .widget<FilledButton>(find.widgetWithText(FilledButton, '保存'))
           .onPressed,
       isNull,
     );
     await tester.tap(find.byType(CheckboxListTile));
     await tester.pumpAndSettle();
-    await tester.tap(find.text('启用在线助手'));
+    await tester.tap(find.text('保存'));
     await tester.pumpAndSettle();
+    // 地址不完整时就地报错，不会存下一条用不了的配置。
     expect(find.textContaining('请输入完整的网关地址'), findsOneWidget);
   });
 
@@ -257,15 +311,16 @@ void main() {
         ),
       );
       expect(find.text('在线'), findsOneWidget);
+      // 在线时必须随时看得到发送边界，而不是只在设置页里写一次。
+      expect(find.textContaining('不发送原始记录、设备标识或历史对话'), findsOneWidget);
       await tester.tap(find.widgetWithText(ActionChip, '今天用了几次？'));
       await tester.pumpAndSettle();
       expect(find.textContaining('在线助手响应超时'), findsOneWidget);
-      await tester.tap(find.byTooltip('回答方式'));
+      // 分段控件里选「本地」即切回本地摘要。
+      await tester.tap(find.text('本地'));
       await tester.pumpAndSettle();
-      await tester.tap(find.text('本地摘要'));
-      await tester.pumpAndSettle();
-      expect(find.text('本地'), findsOneWidget);
       expect(find.text('已切回本地摘要，不联网。'), findsOneWidget);
+      expect(find.textContaining('不发送原始记录、设备标识或历史对话'), findsNothing);
     },
   );
 }

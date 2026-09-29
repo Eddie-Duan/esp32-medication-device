@@ -112,6 +112,48 @@ void main() {
     expect(stale.text, contains('已 9 天'));
   });
 
+  test('同步时间晚于当前时间时单独提醒，而不是静默跳过', () {
+    final observations = evaluateObservations(
+      AssistantContext(
+        totalCount: 3,
+        last7DaysCount: 1,
+        dailyCounts: const [0, 0, 0, 0, 0, 0, 1],
+        lastSyncAt: DateTime(2026, 10, 2, 9),
+      ),
+      now: now,
+    );
+    final future = observations.firstWhere((item) => item.code == 'future_sync');
+    expect(future.text, contains('晚于当前时间'));
+    expect(future.text, contains('核对设备时间'));
+    expect(future.level, ObservationLevel.attention);
+    // 差值为负，stale_sync 本来就触发不了，所以必须由 future_sync 兜住。
+    expect(
+      observations.map((item) => item.code),
+      isNot(contains('stale_sync')),
+    );
+    for (final forbidden in ['漏服', '剂量', '诊断', '停药', '加药']) {
+      expect(future.text, isNot(contains(forbidden)));
+    }
+  });
+
+  test('演示数据的未来同步时间同样不给设备维护建议', () {
+    // 演示源写不进 lastSyncAt，这里直接构造，确认两套文案确实分开了。
+    final observations = evaluateObservations(
+      AssistantContext(
+        totalCount: 3,
+        last7DaysCount: 1,
+        dailyCounts: const [0, 0, 0, 0, 0, 0, 1],
+        lastSyncAt: DateTime(2026, 10, 2, 9),
+        isDemo: true,
+      ),
+      now: now,
+    );
+    expect(
+      observations.firstWhere((item) => item.code == 'future_sync').text,
+      isNot(contains('核对设备时间')),
+    );
+  });
+
   test('任何观察文本都不出现诊断或剂量类结论', () {
     final observations = evaluateObservations(
       AssistantContext(

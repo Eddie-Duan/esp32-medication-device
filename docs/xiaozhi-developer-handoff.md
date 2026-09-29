@@ -21,9 +21,9 @@
 
 ## 现有代码和真实边界
 
-- `mobile_app/lib/assistant/assistant_provider.dart` 是回答接口；`providers/mock_assistant_provider.dart` 是默认本地规则实现，`providers/gateway_assistant_provider.dart` 是旧自建 HTTPS 网关客户端。`assistant_page.dart` 和 `assistant_settings_dialog.dart` 管理界面、模式切换和发送摘要前的同意。
+- `mobile_app/lib/assistant/assistant_provider.dart` 是回答接口；`providers/mock_assistant_provider.dart` 是默认本地规则实现，`providers/gateway_assistant_provider.dart` 是旧自建 HTTPS 网关客户端，`providers/direct_llm_assistant_provider.dart` 是用户自带 Key 的直连实现。`assistant_page.dart` 管界面与「本地/在线」切换，`assistant_api_console.dart` 管多份在线 API 的查看/选择/修改/删除，`assistant_settings_dialog.dart` 只是单条配置的表单（含发送摘要前的同意）。
 - `mobile_app/lib/assistant/models/assistant_context.dart` 定义可发送的统计摘要。原型 BLE 时间文本存于独立库，不进入这份摘要，也不代表实际给药。
-- `server/assistant-gateway/` 与 `protocol/xiaozhi-bridge.md` 属于上一阶段自建 `xiaozhi-esp32-server` 的文字适配。`POST /v1/assistant/chat` 是本仓库接口，**不是小智官方 API**；现有 Android 在线设置只接受这个网关地址。
+- `server/assistant-gateway/` 与 `protocol/xiaozhi-bridge.md` 属于上一阶段自建 `xiaozhi-esp32-server` 的文字适配。`POST /v1/assistant/chat` 是本仓库接口，**不是小智官方 API**；团队网关模式只接受这个地址，此外用户也可以选择在 App 里直连自己的 OpenAI 兼容模型服务（Key 只存本机）。
 - `firmware/esp32-c3/` 是 Arduino BLE 时间文本原型，未实现小智官方设备激活、OTA 与官方云会话。`protocol/prototype-text-v01.md` 是当前 App 与设备的原型同步依据。
 - 官方 WebSocket 文档主要描述设备身份、令牌、`hello` 和音频/控制消息。尚无本项目已验证的 Android 独立客户端凭据流程；先按 [官方云接入核查](xiaozhi-official-cloud.md)确认是否获支持，不能把设备密钥或共享测试令牌塞入 APK。
 

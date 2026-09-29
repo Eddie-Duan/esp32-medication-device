@@ -307,19 +307,48 @@ class LlmBridge:
         return extract_answer(data)
 
 
+# Typed request-storage key: a bare string key is deprecated in aiohttp 3.x.
+REQUEST_ID = web.RequestKey("request_id", str)
+
+
+@web.middleware
+async def errors(request, handler):
+    """Every response — including failures — is JSON carrying a request id.
+
+    The App rejects a non-JSON body with a generic "service returned an invalid
+    format" message, so an unexpected exception escaping as aiohttp's HTML 500
+    would hide the real failure from both the user and whoever they report it to.
+    The request id is generated here, not in the handler, so it also exists for
+    requests rejected before the handler body runs (auth, JSON, size).
+    """
+    request_id = uuid.uuid4().hex
+    request[REQUEST_ID] = request_id
+
+    def failure(status, code, message):
+        return web.json_response(
+            {"error": {"code": code, "message": message}, "request_id": request_id},
+            status=status,
+        )
+
+    try:
+        return await handler(request)
+    except GatewayError as error:
+        return failure(error.status, error.code, error.message)
+    except web.HTTPRequestEntityTooLarge:
+        return failure(413, "request_too_large", "请求过大。")
+    except web.HTTPException:
+        # Routing 404/405 and friends keep aiohttp's own handling.
+        raise
+    except Exception:
+        # Never include the exception text: it can embed the request body or a
+        # credential. Diagnostics belong in the server log, not the response.
+        return failure(500, "internal_error", "网关内部错误，请稍后重试。")
+
+
 def create_app(settings):
     settings.validate()
     session = None
     request_lock = asyncio.Lock()
-
-    @web.middleware
-    async def errors(request, handler):
-        try:
-            return await handler(request)
-        except GatewayError as error:
-            return web.json_response({"error": {"code": error.code, "message": error.message}}, status=error.status)
-        except web.HTTPRequestEntityTooLarge:
-            return web.json_response({"error": {"code": "request_too_large", "message": "请求过大。"}}, status=413)
 
     app = web.Application(client_max_size=16384, middlewares=[errors])
 
@@ -358,7 +387,14 @@ def create_app(settings):
                 answer = await LlmBridge(settings, session).reply(question, context)
             else:
                 answer = await XiaozhiBridge(settings, session).reply(question, context)
-        return web.json_response({"schema_version": 1, "answer": answer, "provider": settings.mode, "request_id": uuid.uuid4().hex})
+        return web.json_response({
+            "schema_version": 1,
+            "answer": answer,
+            "provider": settings.mode,
+            # Same id the error middleware would report, so a successful answer
+            # and a failed one can both be traced to one server-side log line.
+            "request_id": request[REQUEST_ID],
+        })
 
     app.cleanup_ctx.append(lifespan)
     app.router.add_get("/healthz", health)

@@ -76,6 +76,25 @@ class GatewayAssistantProvider implements AssistantProvider {
     }
   }
 
+  /// 只从失败响应里取 `request_id` 这一个字段。
+  ///
+  /// 错误响应体可能带上游内部信息，所以绝不整体回显；读不出来就返回 null，
+  /// 用户看到的仍然是原来那句固定文案。
+  static Future<String?> _requestIdOf(HttpResponse response) async {
+    try {
+      final bytes = <int>[];
+      await for (final chunk in response) {
+        if (bytes.length + chunk.length > 2048) return null;
+        bytes.addAll(chunk);
+      }
+      final data = jsonDecode(utf8.decode(bytes));
+      final id = data is Map ? data['request_id'] : null;
+      return id is String && id.isNotEmpty && id.length <= 64 ? id : null;
+    } catch (_) {
+      return null;
+    }
+  }
+
   Future<String> _request(
     HttpClient client,
     String question,
@@ -99,13 +118,19 @@ class GatewayAssistantProvider implements AssistantProvider {
     );
     final response = await request.close();
     if (response.statusCode != HttpStatus.ok) {
-      throw AssistantException(switch (response.statusCode) {
+      // 失败时把请求编号一起带给用户：他能凭这个报问题，而不必交出问题原文或摘要。
+      final requestId = await _requestIdOf(response);
+      final message = switch (response.statusCode) {
         401 || 403 => '网关访问码无效或已过期，请重新配置。',
         429 => '助手正在处理其他请求，请稍后重试。',
         504 => '小智服务响应超时，请稍后重试。',
         400 || 413 => '问题或记录摘要不符合服务要求，请更新 App 后重试。',
         _ => '在线助手暂时不可用，请稍后重试或切回本地摘要。',
-      });
+      };
+      throw AssistantException(
+        requestId == null ? message : '$message（请求编号 $requestId）',
+        requestId: requestId,
+      );
     }
     if (response.headers.contentType?.mimeType != 'application/json') {
       throw const AssistantException('在线助手返回格式不正确，请联系服务管理员。');

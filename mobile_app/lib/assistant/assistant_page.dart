@@ -2,9 +2,10 @@ import 'dart:math' as math;
 
 import 'package:flutter/material.dart';
 
+import 'assistant_api_console.dart';
+import 'assistant_credentials.dart';
 import 'assistant_service.dart';
 import 'assistant_exception.dart';
-import 'assistant_settings_dialog.dart';
 import 'models/assistant_context.dart';
 import 'models/chat_message.dart';
 
@@ -14,11 +15,15 @@ class AssistantPage extends StatefulWidget {
     this.service,
     this.assistantContext = const AssistantContext(),
     this.contextLoader,
+    this.store,
   });
 
   final AssistantService? service;
   final AssistantContext assistantContext;
   final Future<AssistantContext> Function()? contextLoader;
+
+  /// 已保存的在线 API。测试注入用；默认走系统安全存储。
+  final AssistantCredentialsStore? store;
 
   @override
   State<AssistantPage> createState() => _AssistantPageState();
@@ -26,6 +31,7 @@ class AssistantPage extends StatefulWidget {
 
 class _AssistantPageState extends State<AssistantPage> {
   late AssistantService _service;
+  late final AssistantCredentialsStore _store;
   late final TextEditingController _inputController;
   late final ScrollController _scrollController;
   late final List<ChatMessage> _messages;
@@ -36,6 +42,7 @@ class _AssistantPageState extends State<AssistantPage> {
   void initState() {
     super.initState();
     _service = widget.service ?? AssistantService();
+    _store = widget.store ?? SecureAssistantCredentialsStore();
     _context = widget.assistantContext;
     _inputController = TextEditingController();
     _scrollController = ScrollController();
@@ -105,28 +112,56 @@ class _AssistantPageState extends State<AssistantPage> {
     }
   }
 
-  Future<void> _changeMode(String mode) async {
+  /// 切换上游。回本地是一步；切在线时如果已经配置过 API 也是一步。
+  Future<void> _changeMode(bool remote) async {
+    if (_sending || remote == _service.isRemote) return;
+    if (!remote) {
+      setState(() {
+        _service = AssistantService();
+        _resetConversation('已切回本地摘要，不联网。');
+      });
+      return;
+    }
+    // 已经配置过就直接用选中的那条，不再弹窗——用户要的是「点一下就切」。
+    final provider = await buildSelectedProvider(_store);
+    if (!mounted) return;
+    if (provider == null) {
+      await _openConsole();
+      return;
+    }
+    setState(() {
+      _service = AssistantService(provider: provider, isRemote: true);
+      _resetConversation(_onlineNotice);
+    });
+  }
+
+  static const _onlineNotice =
+      '已启用在线助手。每次提问只发送本次问题和当前统计摘要；历史对话不上传。';
+
+  Future<void> _openConsole() async {
     if (_sending) return;
-    final service = mode == 'local'
-        ? AssistantService()
-        : await showDialog<AssistantService>(
-            context: context,
-            builder: (_) => const AssistantSettingsDialog(),
-          );
+    final service = await showDialog<AssistantService>(
+      context: context,
+      builder: (_) => AssistantApiConsole(store: _store),
+    );
     if (service == null || !mounted) return;
     setState(() {
       _service = service;
-      _messages.clear();
-      _messages.add(
+      _resetConversation(_onlineNotice);
+    });
+  }
+
+  /// 换了上游之后，旧回答的来源已经对不上当前模式，所以清空并要求重新提问。
+  void _resetConversation(String notice) {
+    _messages
+      ..clear()
+      ..add(
         ChatMessage(
           role: ChatRole.assistant,
-          text: service.isRemote
-              ? '已启用在线助手。每次提问只发送本次问题和当前统计摘要；历史对话不上传。'
-              : '已切回本地摘要，不联网。',
+          text: notice,
           createdAt: DateTime.now(),
         ),
       );
-    });
   }
 
   void _scrollToBottom() {
@@ -146,35 +181,17 @@ class _AssistantPageState extends State<AssistantPage> {
       appBar: AppBar(
         title: const Text('用药记录助手'),
         actions: [
-          Padding(
-            padding: const EdgeInsets.only(right: 12),
-            child: Center(
-              child: Chip(
-                label: Text(_service.isRemote ? '在线' : '本地'),
-                avatar: Icon(
-                  _service.isRemote
-                      ? Icons.cloud_outlined
-                      : Icons.offline_bolt_outlined,
-                  size: 16,
-                ),
-                visualDensity: VisualDensity.compact,
-              ),
-            ),
-          ),
-          PopupMenuButton<String>(
-            enabled: !_sending,
-            tooltip: '回答方式',
-            onSelected: _changeMode,
-            itemBuilder: (_) => const [
-              PopupMenuItem(value: 'local', child: Text('本地摘要')),
-              PopupMenuItem(value: 'online', child: Text('在线助手设置')),
-            ],
+          IconButton(
+            onPressed: _sending ? null : _openConsole,
+            icon: const Icon(Icons.settings_outlined),
+            tooltip: '管理 API',
           ),
         ],
       ),
       body: Column(
         children: [
           _buildSummaryCard(),
+          _buildModeBar(),
           Expanded(
             child: ListView.builder(
               controller: _scrollController,
@@ -187,6 +204,76 @@ class _AssistantPageState extends State<AssistantPage> {
           ),
           _buildQuickQuestions(),
           _buildInputBar(),
+        ],
+      ),
+    );
+  }
+
+  /// 常驻的模式切换条。
+  ///
+  /// 之前切换藏在右上角菜单里，用户找不到、也看不出当前在用什么；现在直接显示
+  /// 本地/在线两段，选中态就是当前上游。
+  Widget _buildModeBar() {
+    return Padding(
+      padding: const EdgeInsets.fromLTRB(16, 0, 16, 8),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Center(
+            child: SegmentedButton<bool>(
+              segments: const [
+                ButtonSegment(
+                  value: false,
+                  label: Text('本地'),
+                  icon: Icon(Icons.offline_bolt_outlined, size: 16),
+                ),
+                ButtonSegment(
+                  value: true,
+                  label: Text('在线'),
+                  icon: Icon(Icons.cloud_outlined, size: 16),
+                ),
+              ],
+              selected: {_service.isRemote},
+              onSelectionChanged: _sending
+                  ? null
+                  : (selection) => _changeMode(selection.single),
+            ),
+          ),
+          if (_service.isRemote) ...[
+            const SizedBox(height: 8),
+            _buildPrivacyBanner(),
+          ],
+        ],
+      ),
+    );
+  }
+
+  /// 在线时把「按下发送会发生什么」放在输入框上方，而不是只写在设置页里。
+  Widget _buildPrivacyBanner() {
+    final scheme = Theme.of(context).colorScheme;
+    return Container(
+      width: double.infinity,
+      padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+      decoration: BoxDecoration(
+        color: scheme.surfaceContainerHighest,
+        borderRadius: BorderRadius.circular(10),
+      ),
+      child: Row(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Icon(
+            Icons.privacy_tip_outlined,
+            size: 16,
+            color: scheme.onSurfaceVariant,
+          ),
+          const SizedBox(width: 8),
+          Expanded(
+            child: Text(
+              '每次提问只把「本次问题 + 上方摘要」发给在线模型，'
+              '不发送原始记录、设备标识或历史对话。',
+              style: Theme.of(context).textTheme.bodySmall,
+            ),
+          ),
         ],
       ),
     );
