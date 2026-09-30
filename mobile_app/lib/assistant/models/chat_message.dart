@@ -12,12 +12,19 @@ enum ChatRole { user, assistant, system }
 /// - [knowledge]：在线模型的通用健康知识（例如某种疾病的常识），与设备记录无关。
 enum ChatSource { local, online, knowledge }
 
+/// 用户对一条助手回答的反馈。
+///
+/// 只在当前会话内生效：不落盘、也不回传模型——反馈是「给本地界面的标记」，
+/// 不是要发出去的内容。
+enum ChatFeedback { none, up, down }
+
 class ChatMessage {
   const ChatMessage({
     required this.role,
     required this.text,
     required this.createdAt,
     this.source,
+    this.feedback = ChatFeedback.none,
   });
 
   final ChatRole role;
@@ -27,10 +34,22 @@ class ChatMessage {
   /// 只有 `assistant` 角色会带上来源；用户提问与分隔提示为 null。
   final ChatSource? source;
 
+  /// 用户对这条回答的赞/踩。会话内有效，不参与序列化。
+  final ChatFeedback feedback;
+
   bool get isUser => role == ChatRole.user;
 
   /// 分隔提示，渲染成居中淡色小字而不是气泡。
   bool get isNotice => role == ChatRole.system;
+
+  /// 只改反馈的浅拷贝，其余字段照旧。
+  ChatMessage copyWith({ChatFeedback? feedback}) => ChatMessage(
+    role: role,
+    text: text,
+    createdAt: createdAt,
+    source: source,
+    feedback: feedback ?? this.feedback,
+  );
 
   Map<String, dynamic> toJson() => {
     'role': role.name,

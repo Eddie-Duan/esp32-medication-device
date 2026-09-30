@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:medication_device_app/assistant/assistant_chat_store.dart';
 import 'package:medication_device_app/assistant/assistant_credentials.dart';
+import 'package:medication_device_app/assistant/assistant_exception.dart';
 import 'package:medication_device_app/assistant/assistant_page.dart';
 import 'package:medication_device_app/assistant/assistant_provider.dart';
 import 'package:medication_device_app/assistant/assistant_service.dart';
@@ -52,12 +53,18 @@ class _FixedAnswer implements AssistantProvider {
 
   final String answer;
 
+  /// 被问了几次：反馈用例据此证明「踩」不会再次调用模型。
+  int calls = 0;
+
   @override
   Future<String> reply({
     required String question,
     required AssistantContext context,
     List<String> references = const [],
-  }) async => answer;
+  }) async {
+    calls++;
+    return answer;
+  }
 }
 
 /// 内存朗读引擎：记录读过的文本与停叫次数，不碰平台通道。
@@ -121,6 +128,42 @@ class _StreamingProvider implements StreamingAssistantProvider {
       if (gap > Duration.zero) await Future<void>.delayed(gap);
       yield chunk;
     }
+  }
+}
+
+/// 第一次调用失败、之后成功：专门观察「失败 → 重试 → 成功」的入口。
+class _FailOnceProvider implements AssistantProvider {
+  int calls = 0;
+
+  @override
+  Future<String> reply({
+    required String question,
+    required AssistantContext context,
+    List<String> references = const [],
+  }) async {
+    calls++;
+    if (calls == 1) {
+      throw const AssistantException('模型服务响应超时，请稍后重试或切回本地规则。');
+    }
+    return '今天使用 2 次。';
+  }
+}
+
+/// 延迟回答：专门观察等待中的「取消」——回答迟到后要被丢弃。
+class _SlowAnswer implements AssistantProvider {
+  _SlowAnswer(this.delay, [this.answer = '今天使用 2 次。']);
+
+  final Duration delay;
+  final String answer;
+
+  @override
+  Future<String> reply({
+    required String question,
+    required AssistantContext context,
+    List<String> references = const [],
+  }) async {
+    await Future<void>.delayed(delay);
+    return answer;
   }
 }
 
@@ -555,5 +598,104 @@ void main() {
 
     final data = _flatten(answerText.textSpan!).where((s) => s.text == '2').single;
     expect(data.style?.color, const Color(0xff1565c0));
+  });
+
+  testWidgets('踩在线回答会在本地重新解释，不回传反馈', (tester) async {
+    final provider = _FixedAnswer('本周记录了 12 次。');
+    await _pump(
+      tester,
+      service: AssistantService(provider: provider, isRemote: true),
+      size: const Size(420, 1400),
+    );
+    await _ask(tester, '今天用了几次？');
+    expect(provider.calls, 1);
+
+    await tester.tap(find.byTooltip('没帮助').last);
+    await tester.pumpAndSettle();
+
+    // 反馈只落在本地界面：在线 provider 没被再问一次，也不会把反馈发给模型。
+    expect(provider.calls, 1);
+    expect(find.textContaining('不会发送给模型'), findsOneWidget);
+    expect(find.text('本地回答'), findsOneWidget);
+    expect(find.textContaining('今天使用 2 次'), findsOneWidget);
+  });
+
+  testWidgets('回答失败后给重试入口，点重试能成功', (tester) async {
+    final provider = _FailOnceProvider();
+    await _pump(
+      tester,
+      service: AssistantService(provider: provider, isRemote: true),
+      size: const Size(420, 1400),
+    );
+    await _ask(tester, '今天用了几次？');
+
+    expect(provider.calls, 1);
+    expect(find.textContaining('模型服务响应超时'), findsOneWidget);
+    expect(find.text('上次回答失败，点这里重试'), findsOneWidget);
+
+    await tester.tap(find.text('上次回答失败，点这里重试'));
+    await tester.pumpAndSettle();
+
+    expect(provider.calls, 2);
+    expect(find.textContaining('今天使用 2 次'), findsOneWidget);
+    expect(find.text('上次回答失败，点这里重试'), findsNothing);
+  });
+
+  testWidgets('等待回答时可点「取消」，迟到结果被丢弃', (tester) async {
+    await _pump(
+      tester,
+      service: AssistantService(
+        provider: _SlowAnswer(const Duration(milliseconds: 500)),
+      ),
+      size: const Size(420, 1400),
+    );
+    await tester.enterText(find.byType(TextField), '今天用了几次？');
+    await tester.tap(find.widgetWithIcon(IconButton, Icons.send));
+    await tester.pump();
+    await tester.pump();
+
+    expect(find.text('取消'), findsOneWidget);
+
+    await tester.tap(find.text('取消'));
+    await tester.pump();
+    expect(find.text('已取消本次问答。'), findsOneWidget);
+
+    // 等迟到回答返回：代次已变，结果被丢弃，不落成回答。
+    await tester.pump(const Duration(milliseconds: 600));
+    await tester.pumpAndSettle();
+    expect(find.textContaining('今天使用 2 次'), findsNothing);
+    expect(find.text('取消'), findsNothing);
+  });
+
+  testWidgets('流式回答时可点「停止」，未完成的输出不落成回答', (tester) async {
+    await _pump(
+      tester,
+      service: AssistantService(
+        provider: _StreamingProvider(
+          ['近 7 天共 ', '3 次使用动作。', '今天使用 2 次。'],
+          gap: const Duration(milliseconds: 200),
+        ),
+        isRemote: true,
+      ),
+      size: const Size(420, 1400),
+    );
+    await tester.enterText(find.byType(TextField), '最近怎么样');
+    await tester.tap(find.widgetWithIcon(IconButton, Icons.send));
+    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 250));
+
+    // 第一块已到、流还在走：能看到部分文本和「停止」。
+    expect(find.text('停止'), findsOneWidget);
+    expect(find.textContaining('近 7 天共'), findsOneWidget);
+
+    await tester.tap(find.text('停止'));
+    await tester.pump();
+    expect(find.text('已取消本次问答。'), findsOneWidget);
+
+    // 让剩余 chunk 计时器走完，确认被丢弃、不落成带来源标的完整回答。
+    await tester.pump(const Duration(seconds: 2));
+    await tester.pumpAndSettle();
+    expect(find.text('在线回答'), findsNothing);
+    expect(find.textContaining('今天使用 2 次。'), findsNothing);
   });
 }

@@ -49,6 +49,17 @@ void main() {
     );
   });
 
+  test('闲聊里的数字（岁、小时、分钟）不触发回验', () {
+    expect(
+      numbersNotInSummary(
+        '一般建议 50 岁以上人群每年检查，每次约 30 分钟。',
+        context,
+        now: now,
+      ),
+      isEmpty,
+    );
+  });
+
   test('复述最后同步时间不会被当成编造', () {
     final withSync = AssistantContext(
       todayCount: 1,

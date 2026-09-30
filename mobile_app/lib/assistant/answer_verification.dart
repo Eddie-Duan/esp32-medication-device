@@ -72,7 +72,7 @@ List<int> numbersNotInSummary(
   Set<int> extra = const {},
 }) {
   final allowed = _allowedNumbers(context, now: now, extra: extra);
-  final suspicious = numbersInText(
+  final suspicious = statClaimsInText(
     answer,
   ).where((value) => !allowed.contains(value));
   return suspicious.toList()..sort();
@@ -140,4 +140,18 @@ Set<int> numbersInText(String text) {
     if (value != null) numbers.add(value);
   }
   return numbers;
+}
+
+/// 回答里「在统计语境下」出现的整数：后面紧跟「次 / 条 / 天 / 日」才算一条
+/// 统计结论。闲聊里的年龄、时长、金额等数字不算，避免把正常回答误判成编造。
+final RegExp _statClaimPattern = RegExp(r'(\d+)\s*[次条天日]');
+
+Set<int> statClaimsInText(String text) {
+  final claims = <int>{};
+  final cleaned = text.replaceAll(_dateTimePattern, ' ');
+  for (final match in _statClaimPattern.allMatches(cleaned)) {
+    final value = int.tryParse(match.group(1)!);
+    if (value != null) claims.add(value);
+  }
+  return claims;
 }

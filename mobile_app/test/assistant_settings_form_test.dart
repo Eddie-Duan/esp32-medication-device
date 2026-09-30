@@ -68,8 +68,6 @@ const _presets = <String, String>{
 void main() {
   testWidgets('点预设一下填好地址与模型名，名字空着才补', (tester) async {
     await _openForm(tester);
-    await tester.tap(find.text('我自己的模型'));
-    await tester.pumpAndSettle();
     expect(find.text('常见服务（点一下自动填地址和模型名）'), findsOneWidget);
 
     await tester.tap(find.text('DeepSeek'));
@@ -93,8 +91,6 @@ void main() {
   testWidgets('每个预设地址都能通过保存前的校验', (tester) async {
     for (final entry in _presets.entries) {
       final harness = await _openForm(tester);
-      await tester.tap(find.text('我自己的模型'));
-      await tester.pumpAndSettle();
       await tester.tap(find.text(entry.key));
       await tester.pumpAndSettle();
       // 只补一个 Key：地址本身有问题的话，保存会被拦下。
@@ -107,8 +103,6 @@ void main() {
 
   testWidgets('自带模型的输入框带填写示范', (tester) async {
     await _openForm(tester);
-    await tester.tap(find.text('我自己的模型'));
-    await tester.pumpAndSettle();
     // 只填到 /v1 也可以，路径由 App 补齐——这点必须写在界面上。
     expect(find.textContaining('填到 /v1 即可'), findsOneWidget);
     expect(find.text('https://api.deepseek.com/v1'), findsOneWidget);
@@ -117,8 +111,6 @@ void main() {
 
   testWidgets('姓名留空时用兜底名，保存后回到调用方', (tester) async {
     final harness = await _openForm(tester);
-    await tester.tap(find.text('我自己的模型'));
-    await tester.pumpAndSettle();
     await tester.enterText(
       find.byKey(const Key('model-base-url')),
       'https://api.example.com/v1',
@@ -139,26 +131,10 @@ void main() {
           .onPressed,
       isNull,
     );
-    // 「测试连接」不发问题、不发摘要、也不带访问码，所以不需要同意。
-    expect(
-      tester
-          .widget<OutlinedButton>(find.widgetWithText(OutlinedButton, '测试连接'))
-          .onPressed,
-      isNotNull,
-    );
   });
 
   testWidgets('地址不完整或 Key 为空时就地报错，不返回配置', (tester) async {
-    // 网关地址不完整。
-    var harness = await _openForm(tester);
-    await agreeAndSave(tester);
-    expect(find.textContaining('请输入完整的网关地址'), findsOneWidget);
-    expect(harness.result, isNull);
-
-    // 自带模型：地址合法但没填 Key。
-    harness = await _openForm(tester);
-    await tester.tap(find.text('我自己的模型'));
-    await tester.pumpAndSettle();
+    final harness = await _openForm(tester);
     await tester.enterText(
       find.byKey(const Key('model-base-url')),
       'https://api.example.com/v1',
@@ -189,21 +165,22 @@ void main() {
 
   testWidgets('凭据默认打码，点「显示」才看得见', (tester) async {
     await _openForm(tester, initial: const AssistantProfile(
-      id: 'g1',
-      name: '团队网关',
-      mode: OnlineAssistantMode.gateway,
-      endpoint: 'https://assistant.example.com/v1/assistant/chat',
-      accessToken: 'gateway-code',
+      id: 'm1',
+      name: 'DeepSeek',
+      mode: OnlineAssistantMode.ownModel,
+      baseUrl: 'https://api.deepseek.com/v1',
+      apiKey: 'saved-key',
+      model: 'deepseek-chat',
     ));
 
     expect(
-      tester.widget<TextField>(find.byKey(const Key('gateway-token'))).obscureText,
+      tester.widget<TextField>(find.byKey(const Key('model-api-key'))).obscureText,
       isTrue,
     );
     await tester.tap(find.byTooltip('显示'));
     await tester.pumpAndSettle();
     expect(
-      tester.widget<TextField>(find.byKey(const Key('gateway-token'))).obscureText,
+      tester.widget<TextField>(find.byKey(const Key('model-api-key'))).obscureText,
       isFalse,
     );
   });
@@ -217,11 +194,6 @@ void main() {
     expect(find.text('凭据保存在哪'), findsOneWidget);
     expect(find.textContaining('按「保存」即写入本机安全存储'), findsOneWidget);
     expect(find.textContaining('可在「管理 API」里随时删除'), findsOneWidget);
-    expect(find.textContaining('摘要经团队网关转发给模型'), findsOneWidget);
-
-    // 换成用户自己的模型后，第三条说明必须跟着换成直连的说法。
-    await tester.tap(find.text('我自己的模型'));
-    await tester.pumpAndSettle();
     expect(find.textContaining('不经过团队服务器'), findsOneWidget);
     expect(find.textContaining('摘要经团队网关转发给模型'), findsNothing);
   });

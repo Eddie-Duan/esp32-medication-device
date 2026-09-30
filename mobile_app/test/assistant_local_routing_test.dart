@@ -206,4 +206,44 @@ void main() {
       }
     }
   });
+
+  test('App 功能求助走本地分支，不落到兜底', () async {
+    final cases = <String, String>{
+      '怎么导入演示数据': '导入演示数据',
+      '怎么清空对话': '清空对话',
+      '怎么搜索历史': '搜索',
+      '回答能朗读吗': '朗读',
+      '字太小了怎么办': '大字模式',
+      '怎么联网': '在线',
+    };
+    for (final entry in cases.entries) {
+      final answer = await ask(entry.key);
+      expect(answer, contains(entry.value), reason: entry.key);
+      expect(
+        answer,
+        isNot(contains('本地模式只按固定规则解释')),
+        reason: '「${entry.key}」落到了兜底，说明没有对应的规则分支',
+      );
+    }
+  });
+
+  test('App 功能求助的回答也不出现医疗判断表述', () async {
+    for (final question in [
+      '怎么导入演示数据',
+      '怎么清空对话',
+      '怎么搜索历史',
+      '回答能朗读吗',
+      '字太小了怎么办',
+      '怎么联网',
+    ]) {
+      final answer = await ask(question);
+      for (final forbidden in ['诊断', '剂量', '漏服', '停药']) {
+        expect(
+          answer,
+          isNot(contains(forbidden)),
+          reason: '$question / $forbidden',
+        );
+      }
+    }
+  });
 }

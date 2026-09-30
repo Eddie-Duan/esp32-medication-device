@@ -1,6 +1,7 @@
 import 'answer_verification.dart';
 import 'assistant_knowledge.dart';
 import 'assistant_provider.dart';
+import 'history_relevance.dart';
 import 'models/assistant_context.dart';
 import 'models/chat_message.dart';
 import 'providers/mock_assistant_provider.dart';
@@ -74,16 +75,16 @@ class AssistantService {
         question: question,
         context: context,
         references: references,
-        history: _toTurns(history),
+        history: _toTurns(history, question: question),
       ),
     );
   }
 
-  /// 把页面给的历史整理成只含 user/assistant 的干净回合，供直连模型多轮上下文用。
+  /// 把页面给的历史整理成只含 user/assistant 的干净回合，再按当前问题做相关性
+  /// 裁剪（见 `history_relevance.dart`），供直连模型多轮上下文用。
   ///
-  /// 只取最近几轮，避免请求随对话无限膨胀；来源标记在落盘前已拆掉，
-  /// 这里再拆一次是防老存档里还带着标记。
-  List<ChatTurn> _toTurns(List<ChatMessage> history) {
+  /// 来源标记在落盘前已拆掉，这里再拆一次是防老存档里还带着标记。
+  List<ChatTurn> _toTurns(List<ChatMessage> history, {required String question}) {
     final turns = <ChatTurn>[];
     for (final message in history) {
       if (message.isUser) {
@@ -92,8 +93,7 @@ class AssistantService {
         turns.add((role: 'assistant', text: parseRemoteAnswer(message.text).body));
       }
     }
-    const maxTurns = 8;
-    return turns.length > maxTurns ? turns.sublist(turns.length - maxTurns) : turns;
+    return relevantTurns(turns, question);
   }
 
   /// 在线回答落定：拆来源标记、补「不是设备记录」说明、做数字回验。

@@ -1,12 +1,7 @@
-import 'dart:async';
-import 'dart:convert';
-import 'dart:io';
-
 import 'package:flutter/material.dart';
 
 import 'assistant_credentials.dart';
 import 'assistant_exception.dart';
-import 'providers/gateway_assistant_provider.dart';
 
 /// 一条在线助手配置的**编辑表单**（新增或修改）。
 ///
@@ -53,33 +48,21 @@ const _presets = [
 
 class _AssistantSettingsDialogState extends State<AssistantSettingsDialog> {
   late final TextEditingController _name;
-  late final TextEditingController _endpoint;
-  late final TextEditingController _token;
   late final TextEditingController _baseUrl;
   late final TextEditingController _apiKey;
   late final TextEditingController _model;
 
-  late OnlineAssistantMode _mode;
   String? _error;
   bool _consented = false;
 
   /// 凭据默认打码；「显示」只是让用户确认自己填的是哪一个，不做任何持久化。
   bool _showSecret = false;
 
-  bool _testing = false;
-  String? _testResult;
-
   @override
   void initState() {
     super.initState();
     final initial = widget.initial;
-    _mode = initial?.mode ?? OnlineAssistantMode.gateway;
     _name = TextEditingController(text: initial?.name ?? '');
-    _endpoint = TextEditingController(
-      text: initial?.endpoint ??
-          const String.fromEnvironment('ASSISTANT_GATEWAY_URL'),
-    );
-    _token = TextEditingController(text: initial?.accessToken ?? '');
     _baseUrl = TextEditingController(text: initial?.baseUrl ?? '');
     _apiKey = TextEditingController(text: initial?.apiKey ?? '');
     _model = TextEditingController(text: initial?.model ?? '');
@@ -88,8 +71,6 @@ class _AssistantSettingsDialogState extends State<AssistantSettingsDialog> {
   @override
   void dispose() {
     _name.dispose();
-    _endpoint.dispose();
-    _token.dispose();
     _baseUrl.dispose();
     _apiKey.dispose();
     _model.dispose();
@@ -103,7 +84,6 @@ class _AssistantSettingsDialogState extends State<AssistantSettingsDialog> {
       _model.text = preset.model;
       if (_name.text.trim().isEmpty) _name.text = preset.label;
       _error = null;
-      _testResult = null;
     });
   }
 
@@ -111,9 +91,7 @@ class _AssistantSettingsDialogState extends State<AssistantSettingsDialog> {
     var profile = AssistantProfile(
       id: widget.initial?.id ?? newProfileId(),
       name: _name.text.trim(),
-      mode: _mode,
-      endpoint: _endpoint.text.trim(),
-      accessToken: _token.text.trim(),
+      mode: OnlineAssistantMode.ownModel,
       baseUrl: _baseUrl.text.trim(),
       apiKey: _apiKey.text.trim(),
       model: _model.text.trim(),
@@ -130,61 +108,6 @@ class _AssistantSettingsDialogState extends State<AssistantSettingsDialog> {
       return;
     }
     Navigator.of(context).pop(profile);
-  }
-
-  /// 只验证「地址通不通」，不发问题、不发摘要，也不带访问码。
-  ///
-  /// 走的是网关的 `/healthz`，它只返回 status 与 mode，不含任何凭据或数据。
-  Future<void> _testConnection() async {
-    setState(() {
-      _testing = true;
-      _testResult = null;
-      _error = null;
-    });
-    final client = HttpClient()
-      ..connectionTimeout = const Duration(seconds: 10);
-    String result;
-    try {
-      final endpoint = GatewayAssistantProvider.validateEndpoint(
-        _endpoint.text,
-      );
-      // 去掉查询参数：healthz 不需要它们，也不该把它们带出去。
-      final health = endpoint.replace(path: '/healthz', query: '');
-      final request = await client.getUrl(health);
-      request.followRedirects = false;
-      final response = await request.close();
-      final bytes = <int>[];
-      await for (final chunk in response) {
-        if (bytes.length + chunk.length > 2048) {
-          throw const FormatException('健康检查响应过大');
-        }
-        bytes.addAll(chunk);
-      }
-      if (response.statusCode != HttpStatus.ok) {
-        result = '网关返回 ${response.statusCode}，请检查地址。';
-      } else {
-        final data = jsonDecode(utf8.decode(bytes));
-        final mode = data is Map ? data['mode'] : null;
-        result = mode is String ? '可连接（网关上游模式：$mode）' : '可连接';
-      }
-    } on AssistantException catch (error) {
-      result = error.message;
-    } on TimeoutException {
-      result = '连接超时，请检查网络与地址。';
-    } on SocketException {
-      result = '无法连接，请检查地址与网络。';
-    } on HandshakeException {
-      result = '证书验证失败，请联系服务管理员。';
-    } catch (_) {
-      result = '无法确认该地址是否为助手网关。';
-    } finally {
-      client.close(force: true);
-    }
-    if (!mounted) return;
-    setState(() {
-      _testing = false;
-      _testResult = result;
-    });
   }
 
   @override
@@ -205,35 +128,11 @@ class _AssistantSettingsDialogState extends State<AssistantSettingsDialog> {
                 autocorrect: false,
                 decoration: const InputDecoration(
                   labelText: '名字（可选）',
-                  hintText: '例如：DeepSeek / 团队网关',
+                  hintText: '例如：DeepSeek',
                 ),
               ),
               const SizedBox(height: 12),
-              SegmentedButton<OnlineAssistantMode>(
-                segments: const [
-                  ButtonSegment(
-                    value: OnlineAssistantMode.gateway,
-                    label: Text('团队网关'),
-                    icon: Icon(Icons.cloud_outlined),
-                  ),
-                  ButtonSegment(
-                    value: OnlineAssistantMode.ownModel,
-                    label: Text('我自己的模型'),
-                    icon: Icon(Icons.key_outlined),
-                  ),
-                ],
-                selected: {_mode},
-                onSelectionChanged: (selection) => setState(() {
-                  _mode = selection.single;
-                  _error = null;
-                  _testResult = null;
-                }),
-              ),
-              const SizedBox(height: 12),
-              if (_mode == OnlineAssistantMode.gateway)
-                ..._buildGatewayFields(theme)
-              else
-                ..._buildOwnModelFields(theme),
+              ..._buildOwnModelFields(theme),
               const SizedBox(height: 4),
               _buildPrivacyNotice(theme),
               const SizedBox(height: 8),
@@ -292,53 +191,6 @@ class _AssistantSettingsDialogState extends State<AssistantSettingsDialog> {
         ),
       );
 
-  List<Widget> _buildGatewayFields(ThemeData theme) => [
-        Text(
-          '填写团队提供的助手服务地址；摘要由团队网关转发给模型。',
-          style: theme.textTheme.bodyMedium,
-        ),
-        const SizedBox(height: 12),
-        TextField(
-          controller: _endpoint,
-          key: const Key('gateway-endpoint'),
-          keyboardType: TextInputType.url,
-          autocorrect: false,
-          decoration: const InputDecoration(
-            labelText: '助手服务地址',
-            helperText: '示例：https://assistant.example.com/v1/assistant/chat',
-            helperMaxLines: 2,
-          ),
-        ),
-        _buildSecretField(
-          controller: _token,
-          key: const Key('gateway-token'),
-          label: '网关访问码（由团队提供）',
-        ),
-        const SizedBox(height: 8),
-        Row(
-          children: [
-            OutlinedButton(
-              onPressed: _testing ? null : _testConnection,
-              child: _testing
-                  ? const SizedBox(
-                      width: 16,
-                      height: 16,
-                      child: CircularProgressIndicator(strokeWidth: 2),
-                    )
-                  : const Text('测试连接'),
-            ),
-            const SizedBox(width: 12),
-            if (_testResult != null)
-              Expanded(
-                child: Text(
-                  _testResult!,
-                  style: theme.textTheme.bodySmall,
-                ),
-              ),
-          ],
-        ),
-      ];
-
   List<Widget> _buildOwnModelFields(ThemeData theme) => [
         Text(
           '填写你自己的模型服务。API Key 只在这台手机上使用，不发给团队服务器，也不写入日志。',
@@ -390,9 +242,6 @@ class _AssistantSettingsDialogState extends State<AssistantSettingsDialog> {
       ];
 
   /// 保存前必须看到的说明：发什么、不发什么、凭据在哪。
-  ///
-  /// 直连模式与网关模式的第三条不同——这正是用户最容易搞混的地方，
-  /// 所以按模式切换文案，而不是写一句含糊的通用说明。
   Widget _buildPrivacyNotice(ThemeData theme) => Container(
         width: double.infinity,
         padding: const EdgeInsets.all(12),
@@ -417,14 +266,10 @@ class _AssistantSettingsDialogState extends State<AssistantSettingsDialog> {
             const SizedBox(height: 10),
             Text('凭据保存在哪', style: theme.textTheme.labelLarge),
             const SizedBox(height: 4),
-            Text(
-              _mode == OnlineAssistantMode.gateway
-                  ? '· 按「保存」即写入本机安全存储（Android Keystore / iOS Keychain），'
-                      '可在「管理 API」里随时删除。\n'
-                      '· 摘要经团队网关转发给模型；模型密钥只在服务器上，App 拿不到。'
-                  : '· 按「保存」即写入本机安全存储（Android Keystore / iOS Keychain），'
-                      '可在「管理 API」里随时删除。\n'
-                      '· Key 由本机直接发给上面填写的模型服务，不经过团队服务器，也不写入日志。',
+            const Text(
+              '· 按「保存」即写入本机安全存储（Android Keystore / iOS Keychain），'
+              '可在「管理 API」里随时删除。\n'
+              '· Key 由本机直接发给上面填写的模型服务，不经过团队服务器，也不写入日志。',
             ),
           ],
         ),

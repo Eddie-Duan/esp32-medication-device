@@ -168,6 +168,11 @@ class MockAssistantProvider implements AssistantProvider {
           '设备动作次数只代表装置被使用，不能确认实际服药。';
     }
 
+    if (_matchesAny(normalizedQuestion, const {'导入'})) {
+      return '概览页有「导入演示数据」入口：没有硬件时生成一段示例记录用于体验功能；'
+          '连接硬件同步后会用正式记录替换。演示数据单独存放，清除演示数据不影响设备数据。';
+    }
+
     if (_matchesAny(normalizedQuestion, const {'演示', '示例', '假数据', '测试数据', '模拟数据'})) {
       return context.isDemo
           ? '当前看到的是演示数据：导入时生成的一段示例记录，用于没有硬件时体验功能，'
@@ -178,6 +183,43 @@ class MockAssistantProvider implements AssistantProvider {
     if (_matchesAny(normalizedQuestion, const {'导出', 'CSV', 'csv', 'Excel', 'excel', '表格', '分享'})) {
       return '可以在历史记录页把当前筛选结果导出成 CSV 文件；'
           '导出的是已保存的正式记录，不含原型时间文本，也不含任何凭据。';
+    }
+
+    // —— App 功能求助：本地就能答，不联网。放在通用「帮助」之前，
+    //    否则「怎么清空对话」这类具体问法会被兜底答案吞掉。 ——
+
+    if (_matchesAny(normalizedQuestion, const {'清空', '删对话', '删除对话', '删聊天', '删除聊天'})) {
+      return '在助手页右上角「更多」→「清空对话」可删除本机保存的聊天记录（会先确认一次）。'
+          '这只删对话，不影响用药记录本身。';
+    }
+
+    if (_matchesAny(normalizedQuestion, const {'搜索', '查找对话', '找对话', '搜对话'})) {
+      return '点助手页右上角的放大镜图标，按关键词筛选历史对话；搜索只在本地进行，不发任何网络请求。';
+    }
+
+    if (_matchesAny(normalizedQuestion, const {'朗读', '读出来', '读回答', '语音', '语速', '音调'})) {
+      return '每条助手回答右下角有「朗读」按钮，用 Android 系统语音离线朗读，语音不出手机；'
+          '「更多」→「朗读设置」可开自动朗读、调语速和音调。';
+    }
+
+    if (_matchesAny(normalizedQuestion, const {'大字', '字号', '字体', '字太小', '看不清'})) {
+      return '「更多」→「大字模式」把整页文字放大一档，方便阅读。';
+    }
+
+    if (_matchesAny(normalizedQuestion, const {
+      '加 api',
+      '添加 api',
+      '接入',
+      '自己的模型',
+      '模型服务',
+      '怎么联网',
+      '怎么用在线',
+      '在线设置',
+      'api key',
+    })) {
+      return '在助手页顶部点「在线」即可联网问答；第一次会引导添加自己的模型服务'
+          '（地址 + 你自己的 API Key + 模型名）。Key 只存本机安全存储、直接发给模型服务，'
+          '不经过团队服务器；没配置过也可以先用「本地」。';
     }
 
     if (_matchesAny(normalizedQuestion, const {
@@ -193,7 +235,9 @@ class MockAssistantProvider implements AssistantProvider {
     })) {
       return '我可以按固定规则解释你的记录：今天/近 7 天的次数、逐日规律、总条数、'
           '同步时间、时间未知与未来时间、疑似无效事件，以及需要留意的事项。\n'
-          '我只讲记录本身，不做医疗判断、不给用药建议，也不把设备动作当成服药证明。\n'
+          '也能答 App 怎么用：导入演示数据、连接设备、导出 CSV、清空对话、搜索、'
+          '朗读、大字模式、切换在线等。\n'
+          '我只讲记录和 App 用法，不做医疗判断、不给用药建议，也不把设备动作当成服药证明。\n'
           '想问通用健康知识，切到上面的「在线」；本地模式不联网、不需要账号。';
     }
 
@@ -202,6 +246,8 @@ class MockAssistantProvider implements AssistantProvider {
     return '本地模式只按固定规则解释你的记录，不联网、也没有通用知识。\n'
         '我能直接回答这些：今天用了几次、数据是不是最新的、设备时间、总条数、'
         '异常记录、逐日空档、需要留意的事。\n'
+        '也能答 App 怎么用：导入演示数据、连接设备、导出 CSV、清空对话、搜索、'
+        '朗读、大字、切换在线。\n'
         '想问健康常识（例如某种疾病的科普），切到上面的「在线」就能问。\n'
         '当前记录摘要：${context.toPromptSummary()}';
   }

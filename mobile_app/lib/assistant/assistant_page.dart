@@ -92,6 +92,13 @@ class _AssistantPageState extends State<AssistantPage> {
   /// 大字模式（默认关）。开启后整页字号放大一档。
   bool _largeText = false;
 
+  /// 最近一次失败的提问，用于回答失败后给「重试」入口。
+  String? _failedQuestion;
+
+  /// 请求代次：每次发送 +1；「取消」也 +1。异步结果回来时对不上代次就丢弃，
+  /// 这样用户点了取消后，迟到的回答或错误不会再冒出来。
+  int _requestGeneration = 0;
+
   @override
   void initState() {
     super.initState();
@@ -228,8 +235,11 @@ class _AssistantPageState extends State<AssistantPage> {
     await _stopSpeaking();
 
     _inputController.clear();
+    // 新问题来了，清掉上一次的失败标记。
+    _failedQuestion = null;
     // 多轮上下文只取「本轮更早的」消息：先快照，再追加新提问。
     final history = _sendHistory ? List.of(_messages) : const <ChatMessage>[];
+    final generation = ++_requestGeneration;
     setState(() {
       _messages.add(
         ChatMessage(
@@ -252,27 +262,33 @@ class _AssistantPageState extends State<AssistantPage> {
     try {
       final latestContext =
           await widget.contextLoader?.call() ?? widget.assistantContext;
-      if (!mounted) return;
+      if (!mounted || generation != _requestGeneration) return;
       setState(() => _context = latestContext);
 
       if (wasRemote && _service.supportsStreaming) {
-        await _streamAnswer(question, latestContext, history);
+        await _streamAnswer(
+          question,
+          latestContext,
+          history,
+          generation: generation,
+        );
       } else {
         final answer = await _service.ask(
           question: question,
           context: latestContext,
         );
-        if (!mounted) return;
+        if (!mounted || generation != _requestGeneration) return;
         setState(() => _messages.add(answer));
         _persistHistory();
         _maybeAutoSpeak(answer.text);
       }
     } catch (error) {
-      if (!mounted) return;
+      if (!mounted || generation != _requestGeneration) return;
+      _failedQuestion = question;
       setState(() => _messages.add(_errorMessage(error, wasRemote: wasRemote)));
       _persistHistory();
     } finally {
-      if (mounted) {
+      if (mounted && generation == _requestGeneration) {
         setState(() {
           _sending = false;
           _streaming = false;
@@ -290,8 +306,9 @@ class _AssistantPageState extends State<AssistantPage> {
   Future<void> _streamAnswer(
     String question,
     AssistantContext latestContext,
-    List<ChatMessage> history,
-  ) async {
+    List<ChatMessage> history, {
+    required int generation,
+  }) async {
     final result = _service.streamAsk(
       question: question,
       context: latestContext,
@@ -304,7 +321,7 @@ class _AssistantPageState extends State<AssistantPage> {
     final buffer = StringBuffer();
     await for (final chunk in result.stream) {
       buffer.write(chunk);
-      if (!mounted) return;
+      if (!mounted || generation != _requestGeneration) return;
       setState(() => _streamText = buffer.toString());
       _jumpToBottom();
     }
@@ -312,7 +329,7 @@ class _AssistantPageState extends State<AssistantPage> {
     if (raw.isEmpty) {
       throw const AssistantException('模型服务没有返回文字。');
     }
-    if (!mounted) return;
+    if (!mounted || generation != _requestGeneration) return;
     final message = _service.finalizeRemote(
       raw,
       latestContext,
@@ -391,6 +408,21 @@ class _AssistantPageState extends State<AssistantPage> {
     );
     _persistHistory();
     _scrollToBottom();
+  }
+
+  /// 取消进行中的提问：让迟到的结果失效，界面立刻停止等待。
+  ///
+  /// 不会真的中断底层网络请求（那需要拿到底层句柄），只是让这次请求的结果被丢弃，
+  /// 用户这边马上能继续打字或切模式。
+  void _cancelPending() {
+    if (!_sending) return;
+    _requestGeneration++;
+    setState(() {
+      _sending = false;
+      _streaming = false;
+      _streamText = '';
+    });
+    _appendNotice('已取消本次问答。');
   }
 
   /// 清空本机聊天记录。
@@ -576,7 +608,7 @@ class _AssistantPageState extends State<AssistantPage> {
     final accent = _service.isRemote ? _onlineAccent : _localAccent;
     final page = Scaffold(
       appBar: AppBar(
-        title: const Text('用药记录助手'),
+        title: const Text('记录助手'),
         actions: [
           IconButton(
             onPressed: () => setState(() {
@@ -616,6 +648,7 @@ class _AssistantPageState extends State<AssistantPage> {
                     if (_sending && !_streaming) _buildThinkingBubble(),
                     if (_streaming) _buildStreamingBubble(),
                     _buildFollowUps(),
+                    _buildRetryBar(),
                   ],
                 ],
               ),
@@ -990,12 +1023,18 @@ class _AssistantPageState extends State<AssistantPage> {
               ],
               // 助手回答带强调：声明浅色、个人数据蓝色、问题红色、正文黑色。
               if (message.isUser) Text(message.text) else _buildAnswerText(message),
-              // 助手回答可以朗读：Android 系统 TTS，离线、语音不出手机。
+              // 助手回答可以朗读，也能给赞/踩反馈。
               if (!message.isUser) ...[
                 const SizedBox(height: 2),
                 Align(
                   alignment: Alignment.centerRight,
-                  child: _buildSpeakButton(message),
+                  child: Row(
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      _buildSpeakButton(message),
+                      _buildFeedback(message),
+                    ],
+                  ),
                 ),
               ],
             ],
@@ -1035,6 +1074,71 @@ class _AssistantPageState extends State<AssistantPage> {
         tapTargetSize: MaterialTapTargetSize.shrinkWrap,
       ),
     );
+  }
+
+  /// 「有帮助 / 没帮助」反馈：只在助手气泡里，用户提问不提供。反馈只落在本地界面，
+  /// 不回传模型、也不落盘。
+  Widget _buildFeedback(ChatMessage message) {
+    return Row(
+      mainAxisSize: MainAxisSize.min,
+      children: [
+        IconButton(
+          onPressed: () => _rate(message, ChatFeedback.up),
+          icon: Icon(
+            message.feedback == ChatFeedback.up
+                ? Icons.thumb_up
+                : Icons.thumb_up_outlined,
+            size: 16,
+          ),
+          visualDensity: VisualDensity.compact,
+          tooltip: '有帮助',
+        ),
+        IconButton(
+          onPressed: () => _rate(message, ChatFeedback.down),
+          icon: Icon(
+            message.feedback == ChatFeedback.down
+                ? Icons.thumb_down
+                : Icons.thumb_down_outlined,
+            size: 16,
+          ),
+          visualDensity: VisualDensity.compact,
+          tooltip: '没帮助',
+        ),
+      ],
+    );
+  }
+
+  /// 给一条助手回答记反馈。赞只做标记；「踩」在线/知识回答时，不回传反馈，
+  /// 只用本地规则把同一问题重新解释一遍作对比。
+  Future<void> _rate(ChatMessage message, ChatFeedback feedback) async {
+    final index = _messages.indexOf(message);
+    if (index < 0) return;
+    final toggled = message.feedback == feedback ? ChatFeedback.none : feedback;
+    setState(() => _messages[index] = message.copyWith(feedback: toggled));
+    if (feedback == ChatFeedback.down &&
+        toggled == ChatFeedback.down &&
+        message.source != ChatSource.local) {
+      final question = _questionBefore(message);
+      if (question == null) return;
+      _appendNotice('已记录这条回答没帮助（不会发送给模型）。下面用本地规则重新解释：');
+      final local = await AssistantService().ask(
+        question: question,
+        context: _context,
+      );
+      if (!mounted) return;
+      setState(() => _messages.add(local));
+      _persistHistory();
+      _scrollToBottom();
+    }
+  }
+
+  /// 这条回答对应的那个提问（往前找最近的用户消息）。
+  String? _questionBefore(ChatMessage message) {
+    final index = _messages.indexOf(message);
+    for (var i = index - 1; i >= 0; i--) {
+      if (_messages[i].isUser) return _messages[i].text;
+    }
+    return null;
   }
 
   /// 回答正文：把声明/个人数据/问题/正文拆成不同样式（见 answer_styling.dart）。
@@ -1094,6 +1198,7 @@ class _AssistantPageState extends State<AssistantPage> {
   );
 
   /// 在线助手最长可能等 55 秒；只靠发送按钮上的小转圈，对话区看起来像卡死了。
+  /// 所以给一个「取消」，用户可以不必干等。
   Widget _buildThinkingBubble() => Align(
     alignment: Alignment.centerLeft,
     child: Container(
@@ -1103,16 +1208,31 @@ class _AssistantPageState extends State<AssistantPage> {
         color: Theme.of(context).colorScheme.surfaceContainerHighest,
         borderRadius: BorderRadius.circular(16),
       ),
-      child: Row(
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
         mainAxisSize: MainAxisSize.min,
         children: [
-          const SizedBox(
-            width: 14,
-            height: 14,
-            child: CircularProgressIndicator(strokeWidth: 2),
+          Row(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              const SizedBox(
+                width: 14,
+                height: 14,
+                child: CircularProgressIndicator(strokeWidth: 2),
+              ),
+              const SizedBox(width: 10),
+              Text(_service.isRemote ? '正在询问在线助手…' : '正在读取本地统计…'),
+            ],
           ),
-          const SizedBox(width: 10),
-          Text(_service.isRemote ? '正在询问在线助手…' : '正在读取本地统计…'),
+          TextButton(
+            onPressed: _cancelPending,
+            child: const Text('取消'),
+            style: TextButton.styleFrom(
+              visualDensity: VisualDensity.compact,
+              padding: const EdgeInsets.symmetric(horizontal: 8),
+              tapTargetSize: MaterialTapTargetSize.shrinkWrap,
+            ),
+          ),
         ],
       ),
     ),
@@ -1149,6 +1269,15 @@ class _AssistantPageState extends State<AssistantPage> {
                 style: Theme.of(context).textTheme.labelSmall,
               ),
             ],
+          ),
+          TextButton(
+            onPressed: _cancelPending,
+            child: const Text('停止'),
+            style: TextButton.styleFrom(
+              visualDensity: VisualDensity.compact,
+              padding: const EdgeInsets.symmetric(horizontal: 8),
+              tapTargetSize: MaterialTapTargetSize.shrinkWrap,
+            ),
           ),
         ],
       ),
@@ -1229,6 +1358,23 @@ class _AssistantPageState extends State<AssistantPage> {
       if (message.isUser) return message.text;
     }
     return null;
+  }
+
+  /// 回答失败后的「重试」入口：重新发送同一条问题。
+  Widget _buildRetryBar() {
+    final question = _failedQuestion;
+    if (question == null || _sending) return const SizedBox.shrink();
+    return Padding(
+      padding: const EdgeInsets.only(top: 4, bottom: 8),
+      child: Align(
+        alignment: Alignment.centerLeft,
+        child: ActionChip(
+          avatar: const Icon(Icons.refresh, size: 16),
+          label: const Text('上次回答失败，点这里重试'),
+          onPressed: () => _send(question),
+        ),
+      ),
+    );
   }
 
   /// 快捷问题。每个都能在本地模式下拿到确定答案，不靠在线模型。

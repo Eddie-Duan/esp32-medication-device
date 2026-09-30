@@ -3,7 +3,7 @@ import 'models/assistant_context.dart';
 /// 回答正文里的一种强调样式。页面据此上色/加粗/斜体，这里只存数据、不碰 Flutter。
 ///
 /// - [plain]：正文（黑色）。
-/// - [data]：个人数据（次数、总条数这类来自摘要的数字，蓝色）。
+/// - [data]：个人数据（来自摘要、且后面紧跟「次 / 条」的次数或条数，蓝色）。
 /// - [alert]：需要留意的问题（回验提醒、本地「需要留意」观察，红色）。
 /// - [notice]：AI 声明（「这是通用健康知识、不是你的设备记录」，浅色斜体）。
 enum AnswerSpanKind { plain, data, alert, notice }
@@ -60,7 +60,19 @@ List<AnswerSpan> styleAnswer(String text, {Set<int> dataNumbers = const {}}) {
   return spans;
 }
 
-/// 正文里的整数，命中 [dataNumbers] 的标成个人数据（蓝色）。
+/// 数字后面是否紧跟「次 / 条」这类次数单位。
+///
+/// 只把「X 次 / X 条」当成用户的次数/条数；闲聊里的「50 岁」「8 小时」「3 亿」
+/// 这些数字即使数值撞上摘要，也不是个人数据，不标蓝。
+bool _followedByCountUnit(String text, int from) {
+  var i = from;
+  while (i < text.length && (text[i] == ' ' || text[i] == '　')) {
+    i++;
+  }
+  return i < text.length && (text[i] == '次' || text[i] == '条');
+}
+
+/// 正文里的整数，命中 [dataNumbers] 且后面紧跟「次 / 条」的标成个人数据（蓝色）。
 List<AnswerSpan> _highlightNumbers(String text, Set<int> dataNumbers) {
   if (dataNumbers.isEmpty || text.isEmpty) {
     return [if (text.isNotEmpty) AnswerSpan(text)];
@@ -73,7 +85,9 @@ List<AnswerSpan> _highlightNumbers(String text, Set<int> dataNumbers) {
       spans.add(AnswerSpan(text.substring(index, match.start)));
     }
     final value = int.tryParse(match.group(0)!);
-    final isData = value != null && dataNumbers.contains(value);
+    final isData = value != null &&
+        dataNumbers.contains(value) &&
+        _followedByCountUnit(text, match.end);
     spans.add(
       AnswerSpan(
         match.group(0)!,

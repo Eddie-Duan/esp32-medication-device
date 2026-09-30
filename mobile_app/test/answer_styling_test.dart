@@ -12,11 +12,12 @@ void main() {
     expect(spans.first.kind, AnswerSpanKind.notice);
     expect(spans.first.text, contains('不是你的设备记录'));
 
+    // 「7」后面是「天」不是次数单位，不标蓝；「3」后面是「次」，标蓝。
     final data = spans
         .where((s) => s.kind == AnswerSpanKind.data)
         .map((s) => s.text)
         .toList();
-    expect(data, containsAll(['3', '7']));
+    expect(data, ['3']);
   });
 
   test('结尾「提醒」标成问题', () {
@@ -39,6 +40,12 @@ void main() {
     expect(spans, hasLength(1));
     expect(spans.single.kind, AnswerSpanKind.plain);
     expect(spans.single.text, '近 7 天共 3 次。');
+  });
+
+  test('闲聊里的数字即使数值撞上摘要也不标蓝', () {
+    const text = '你今年 50 岁，每天睡 8 小时，全球约 3 亿人受影响。';
+    final spans = styleAnswer(text, dataNumbers: const {50, 8, 3});
+    expect(spans.where((s) => s.kind == AnswerSpanKind.data), isEmpty);
   });
 
   test('personalDataNumbers 收集摘要里的原始数字', () {

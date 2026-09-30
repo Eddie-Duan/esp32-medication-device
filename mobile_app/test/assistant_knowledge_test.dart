@@ -101,4 +101,45 @@ void main() {
       contains('history.toggle'),
     );
   });
+
+  test('App 功能片段都能被问到', () {
+    expect(
+      retrieveKnowledge('怎么导入演示数据').map((c) => c.id),
+      contains('app.import'),
+    );
+    expect(
+      retrieveKnowledge('怎么导出记录').map((c) => c.id),
+      contains('app.export'),
+    );
+    expect(
+      retrieveKnowledge('清空对话会删记录吗').map((c) => c.id),
+      contains('app.clear'),
+    );
+    expect(
+      retrieveKnowledge('怎么搜索对话').map((c) => c.id),
+      contains('app.search'),
+    );
+    expect(
+      retrieveKnowledge('回答能朗读吗').map((c) => c.id),
+      contains('app.tts'),
+    );
+    expect(
+      retrieveKnowledge('字太小看不清').map((c) => c.id),
+      contains('app.large_text'),
+    );
+    expect(
+      retrieveKnowledge('怎么启用在线').map((c) => c.id),
+      contains('app.online'),
+    );
+  });
+
+  test('App 功能语料不放任何医学内容', () {
+    // 语料只讲设备和 App 用法，不出现剂量/诊断/服药指导这类诱导医疗建议的词。
+    final appChunks = assistantKnowledge.where((c) => c.id.startsWith('app.'));
+    for (final chunk in appChunks) {
+      for (final forbidden in ['剂量', '诊断', '几片', '用法用量', '处方']) {
+        expect(chunk.body, isNot(contains(forbidden)), reason: chunk.id);
+      }
+    }
+  });
 }

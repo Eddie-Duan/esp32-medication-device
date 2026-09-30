@@ -112,11 +112,13 @@ void main() {
     await tester.tap(find.text('添加新的 API'));
     await tester.pumpAndSettle();
     expect(find.text('添加 API'), findsOneWidget);
-    await tester.enterText(find.byKey(const Key('profile-name')), '我的网关');
+    await tester.enterText(find.byKey(const Key('profile-name')), '我的模型');
     await tester.enterText(
-      find.byKey(const Key('gateway-endpoint')),
-      'https://assistant.example.com/v1/assistant/chat',
+      find.byKey(const Key('model-base-url')),
+      'https://api.example.com/v1',
     );
+    await tester.enterText(find.byKey(const Key('model-api-key')), 'k');
+    await tester.enterText(find.byKey(const Key('model-name')), 'my-model');
     await tester.tap(find.byType(CheckboxListTile));
     await tester.pumpAndSettle();
     await tester.tap(find.text('保存'));
@@ -124,8 +126,8 @@ void main() {
 
     expect(store.saves, 1);
     expect(store.state.profiles, hasLength(1));
-    expect(store.state.selectedProfile?.name, '我的网关');
-    expect(find.text('我的网关'), findsOneWidget);
+    expect(store.state.selectedProfile?.name, '我的模型');
+    expect(find.text('我的模型'), findsOneWidget);
     expect(find.text('当前使用'), findsOneWidget);
     expect(find.textContaining('还没有保存任何 API'), findsNothing);
   });
