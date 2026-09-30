@@ -1,8 +1,12 @@
-/// 助手可检索的设备知识库（RAG 的检索端）。
+/// 助手可检索的设备知识库（RAG 的检索端），**运行时语料的唯一来源**。
 ///
-/// 内容与 [`server/assistant-gateway/knowledge/`](../../../server/assistant-gateway/knowledge/)
-/// 里的 markdown 是同一份：那边是人类可读的源，这里是 App 内的 Dart 副本，
-/// **改内容要两处同步**。
+/// 语料就是这里。早期另有 `server/assistant-gateway/knowledge/` 下的一份 markdown 副本，
+/// 两份靠人肉同步、已经漂移过，所以取消了副本：那个目录现在只写「写什么、怎么写、
+/// 怎么验」（收录原则、安全边界、术语、验收），要改助手实际检索到的知识就改本文件。
+///
+/// 错误码（`STORAGE_UNAVAILABLE` / `READ_FAILED` / `BAD_FILE` / `TOO_MANY_FILES` /
+/// `ACK_TIMEOUT`）来自 ESP32 固件同步流程返回的状态码（`flash.ino` 的 `syncError`）。
+/// **固件升级后必须复核这些片段**，别让语料停在旧固件的行为上。
 ///
 /// 收录原则（安全边界，改动前先读 `knowledge/README.md`）：
 /// - 只放「这个设备和这个 App 自己才知道、通用模型答不了」的权威事实：
