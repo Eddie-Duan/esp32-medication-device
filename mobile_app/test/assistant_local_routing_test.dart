@@ -144,4 +144,66 @@ void main() {
   test('空问题仍然先要求输入', () async {
     expect(await ask('   '), '请先输入问题。');
   });
+
+  test('连不上/同步失败走排查步骤，不报最后同步时间', () async {
+    for (final question in ['连不上蓝牙了', '同步失败怎么办', '扫描不到设备']) {
+      final answer = await ask(question);
+      expect(answer, contains('重新扫描'), reason: question);
+      expect(answer, isNot(contains('最后一次同步')), reason: question);
+      expect(answer, contains('不会删除设备上的记录'), reason: question);
+    }
+  });
+
+  test('问演示数据来源：演示时说清是示例，真机时说来自同步', () async {
+    final demoAnswer = await ask(
+      '这是演示数据吗',
+      const AssistantContext(isDemo: true, totalCount: 3, last7DaysCount: 1),
+    );
+    expect(demoAnswer, contains('演示数据'));
+
+    final deviceAnswer = await ask('这是演示数据吗', device);
+    expect(deviceAnswer, contains('不是演示数据'));
+  });
+
+  test('问导出：指向历史记录页 CSV，且不含凭据', () async {
+    for (final question in ['怎么导出记录', '能分享成表格吗', '导成 CSV']) {
+      final answer = await ask(question);
+      expect(answer, contains('CSV'), reason: question);
+      expect(answer, contains('凭据'), reason: question);
+    }
+  });
+
+  test('问能做什么：列出能力，不出现医疗判断表述', () async {
+    for (final question in ['你能做什么', '能问什么？', '怎么用这个助手']) {
+      final answer = await ask(question);
+      expect(answer, contains('按固定规则解释'), reason: question);
+      expect(answer, contains('在线'), reason: question);
+      for (final forbidden in ['诊断', '剂量', '漏服']) {
+        expect(
+          answer,
+          isNot(contains(forbidden)),
+          reason: '$question / $forbidden',
+        );
+      }
+    }
+  });
+
+  test('新增分支的回答也不出现诊断、剂量、漏服、停药', () async {
+    for (final question in [
+      '蓝牙连不上',
+      '同步失败怎么办',
+      '这是演示数据吗',
+      '怎么导出记录',
+      '你能做什么',
+    ]) {
+      final answer = await ask(question);
+      for (final forbidden in ['诊断', '剂量', '漏服', '停药']) {
+        expect(
+          answer,
+          isNot(contains(forbidden)),
+          reason: '$question / $forbidden',
+        );
+      }
+    }
+  });
 }

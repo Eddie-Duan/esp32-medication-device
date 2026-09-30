@@ -20,6 +20,9 @@ class AssistantService {
   /// 注入固定时间便于测试；本地规则自己会读当前时间，这里只有回验需要它。
   final DateTime? _now;
 
+  /// 当前在线 provider 是否支持增量流式输出。
+  bool get supportsStreaming => _provider is StreamingAssistantProvider;
+
   Future<ChatMessage> ask({
     required String question,
     required AssistantContext context,
@@ -27,13 +30,7 @@ class AssistantService {
     // 只有在线模式检索设备知识库：本地规则不联网、也不看这份语料。
     final chunks = isRemote ? retrieveKnowledge(question) : const <KnowledgeChunk>[];
     final references = [for (final chunk in chunks) chunk.toReference()];
-    // 检索到的知识里出现过的数字要放行进回验，见 answer_verification.dart。
-    final referenceNumbers = <int>{
-      for (final chunk in chunks) ...[
-        ...numbersInText(chunk.title),
-        ...numbersInText(chunk.body),
-      ],
-    };
+    final referenceNumbers = _referenceNumbers(chunks);
 
     final answer = await _provider.reply(
       question: question,
@@ -49,8 +46,65 @@ class AssistantService {
         source: ChatSource.local,
       );
     }
+    return finalizeRemote(answer, context, extra: referenceNumbers);
+  }
 
-    final parsed = parseRemoteAnswer(answer);
+  /// 在线流式回答：先算好检索结果，再返回 raw 文本流。
+  ///
+  /// 页面把流逐块接进气泡；流结束后调用 [finalizeRemote] 把整段回答落定
+  /// （拆来源标记、补「不是设备记录」、做数字回验）。调用前需确认
+  /// [supportsStreaming] 为 true。
+  ({
+    List<String> references,
+    Set<int> referenceNumbers,
+    Stream<String> stream,
+  }) streamAsk({
+    required String question,
+    required AssistantContext context,
+    List<ChatMessage> history = const [],
+  }) {
+    final chunks = retrieveKnowledge(question);
+    final references = [for (final chunk in chunks) chunk.toReference()];
+    final referenceNumbers = _referenceNumbers(chunks);
+    final provider = _provider as StreamingAssistantProvider;
+    return (
+      references: references,
+      referenceNumbers: referenceNumbers,
+      stream: provider.replyStream(
+        question: question,
+        context: context,
+        references: references,
+        history: _toTurns(history),
+      ),
+    );
+  }
+
+  /// 把页面给的历史整理成只含 user/assistant 的干净回合，供直连模型多轮上下文用。
+  ///
+  /// 只取最近几轮，避免请求随对话无限膨胀；来源标记在落盘前已拆掉，
+  /// 这里再拆一次是防老存档里还带着标记。
+  List<ChatTurn> _toTurns(List<ChatMessage> history) {
+    final turns = <ChatTurn>[];
+    for (final message in history) {
+      if (message.isUser) {
+        turns.add((role: 'user', text: message.text));
+      } else if (message.role == ChatRole.assistant) {
+        turns.add((role: 'assistant', text: parseRemoteAnswer(message.text).body));
+      }
+    }
+    const maxTurns = 8;
+    return turns.length > maxTurns ? turns.sublist(turns.length - maxTurns) : turns;
+  }
+
+  /// 在线回答落定：拆来源标记、补「不是设备记录」说明、做数字回验。
+  ///
+  /// 流式和非流式两条路径共用这一步，保证两边的回答长得一模一样。
+  ChatMessage finalizeRemote(
+    String raw,
+    AssistantContext context, {
+    Set<int> extra = const {},
+  }) {
+    final parsed = parseRemoteAnswer(raw);
     if (parsed.isKnowledge) {
       // 通用知识回答不参与数字回验：里面的数字（例如「全球约 3 亿人」）本来就不
       // 来自摘要，拿摘要去比对只会把正常回答误判成编造，还得跟一句莫名其妙的提醒。
@@ -68,10 +122,18 @@ class AssistantService {
         parsed.body,
         context,
         now: _now,
-        extra: referenceNumbers,
+        extra: extra,
       ),
       createdAt: DateTime.now(),
       source: ChatSource.online,
     );
   }
+
+  /// 检索到的知识里出现过的数字要放行进回验，见 answer_verification.dart。
+  Set<int> _referenceNumbers(List<KnowledgeChunk> chunks) => <int>{
+    for (final chunk in chunks) ...[
+      ...numbersInText(chunk.title),
+      ...numbersInText(chunk.body),
+    ],
+  };
 }

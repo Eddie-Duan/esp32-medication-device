@@ -4,6 +4,13 @@ import 'package:flutter_tts/flutter_tts.dart';
 abstract class AssistantSpeaker {
   Future<void> speak(String text);
   Future<void> stop();
+
+  /// 语速，flutter_tts 取值 0.0–1.0（0.5 为正常）。
+  Future<void> setRate(double rate);
+
+  /// 音调，flutter_tts 取值 0.5–2.0（1.0 为正常）。
+  Future<void> setPitch(double pitch);
+
   Future<void> dispose();
 }
 
@@ -14,14 +21,25 @@ abstract class AssistantSpeaker {
 class SystemTtsSpeaker implements AssistantSpeaker {
   final FlutterTts _tts = FlutterTts();
 
+  double _rate = 0.5;
+  double _pitch = 1.0;
+
   @override
   Future<void> speak(String text) async {
     final trimmed = text.trim();
     if (trimmed.isEmpty) return;
-    // 每次读前设定中文，兼容设备默认引擎是英文的情况。
+    // 每次读前设定语言与语速/音调，兼容设备默认引擎是英文、或用户调过的情况。
     await _tts.setLanguage('zh-CN');
+    await _tts.setSpeechRate(_rate);
+    await _tts.setPitch(_pitch);
     await _tts.speak(trimmed);
   }
+
+  @override
+  Future<void> setRate(double rate) async => _rate = rate;
+
+  @override
+  Future<void> setPitch(double pitch) async => _pitch = pitch;
 
   @override
   Future<void> stop() => _tts.stop();

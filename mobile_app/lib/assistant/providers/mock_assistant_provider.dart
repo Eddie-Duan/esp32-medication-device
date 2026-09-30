@@ -34,12 +34,39 @@ class MockAssistantProvider implements AssistantProvider {
     '诊断',
   };
 
+  /// 连接与同步故障的触发词。要放在「最新/同步/多久」之前：
+  /// 「同步失败」含「同步」，若先撞到「同步」分支就会去报最后同步时间，
+  /// 用户要的却是排查步骤。
+  static const _connectionKeywords = {
+    '连不上',
+    '连接不上',
+    '连不上蓝牙',
+    '蓝牙连不上',
+    '同步失败',
+    '同步不了',
+    '同步不上',
+    '同步出错',
+    '扫描不到',
+    '配对',
+    '蓝牙',
+    'BLE',
+  };
+
   static const _medicalBoundaryAnswer =
       '这个问题不该由设备记录来回答。\n'
       '设备记录只能说明装置被使用过，不能确认是否服药，所以「有没有漏服」'
       '这类判断需要你或医生按实际情况来确认。\n'
       '我也不做诊断、不推荐剂量、不调整用药方案，这些请以医生或药师的意见为准。\n'
       '如果你问的是记录本身，可以直接问：今天用了几次、数据是不是最新的、空白那几天怎么看。';
+
+  /// 「连不上 / 同步失败」这类维护问题，放在数据分支之前回答：
+  /// 用户要的是排查步骤，不是一句「最后一次同步是……」。同步失败不会删记录，
+  /// 所以结尾补一句安心，避免让人以为设备上的数据没了。
+  static const _connectionAnswer =
+      '先检查设备电量与充电，确认设备在广播窗口内、蓝牙没被别的应用占用，'
+      '再在 App 里重新扫描（不是系统蓝牙配对）。\n'
+      '若提示了具体错误码，切到「在线」问那个错误码是什么意思；'
+      '同步失败不会删除设备上的记录。';
 
   @override
   Future<String> reply({
@@ -64,6 +91,10 @@ class MockAssistantProvider implements AssistantProvider {
 
     if (_matchesAny(normalizedQuestion, _medicalKeywords)) {
       return _medicalBoundaryAnswer;
+    }
+
+    if (_matchesAny(normalizedQuestion, _connectionKeywords)) {
+      return _connectionAnswer;
     }
 
     if (normalizedQuestion.contains('今天') ||
@@ -135,6 +166,35 @@ class MockAssistantProvider implements AssistantProvider {
       return '下面是按固定规则得出的观察，只陈述事实，不是医疗建议：\n'
           '${_observationList(observations)}'
           '设备动作次数只代表装置被使用，不能确认实际服药。';
+    }
+
+    if (_matchesAny(normalizedQuestion, const {'演示', '示例', '假数据', '测试数据', '模拟数据'})) {
+      return context.isDemo
+          ? '当前看到的是演示数据：导入时生成的一段示例记录，用于没有硬件时体验功能，'
+                '不代表真实用药；连接硬件同步后会换成正式记录。'
+          : '当前数据来自设备同步，不是演示数据。';
+    }
+
+    if (_matchesAny(normalizedQuestion, const {'导出', 'CSV', 'csv', 'Excel', 'excel', '表格', '分享'})) {
+      return '可以在历史记录页把当前筛选结果导出成 CSV 文件；'
+          '导出的是已保存的正式记录，不含原型时间文本，也不含任何凭据。';
+    }
+
+    if (_matchesAny(normalizedQuestion, const {
+      '帮助',
+      '怎么用',
+      '能做什么',
+      '能问什么',
+      '能答什么',
+      '功能',
+      '你是谁',
+      '是什么',
+      '用途',
+    })) {
+      return '我可以按固定规则解释你的记录：今天/近 7 天的次数、逐日规律、总条数、'
+          '同步时间、时间未知与未来时间、疑似无效事件，以及需要留意的事项。\n'
+          '我只讲记录本身，不做医疗判断、不给用药建议，也不把设备动作当成服药证明。\n'
+          '想问通用健康知识，切到上面的「在线」；本地模式不联网、不需要账号。';
     }
 
     // 兜底不再只丢一句摘要：先说清本地模式能答什么、答不了什么，

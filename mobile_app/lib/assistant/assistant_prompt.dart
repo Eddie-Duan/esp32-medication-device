@@ -48,3 +48,13 @@ String assistantUserPayload(
       'context': context.toJson(),
       if (references.isNotEmpty) 'references': references,
     });
+
+/// 多轮对话时追加在 system 提示词之后的一行。
+///
+/// **不并入 [assistantSystemPrompt]**：那一份要与 `gateway.py` 的 `SYSTEM_PROMPT`
+/// 逐字同步，而多轮上下文只出现在直连模式，网关不支持、也不该带上历史。
+/// 塞进同步的那份会破坏 `test_prompt_sync.py` 的逐字比对。这里单独放，
+/// 只有用户开启「带上本轮对话」且走直连时才拼进去。
+const String assistantHistoryNote =
+    '下面是本次会话里更早的几轮问答，只用于理解当前问题的上下文，它们属于同一个会话；'
+    '回答时仍不要引用其他用户或会话，也不要编造历史里没有的内容。';

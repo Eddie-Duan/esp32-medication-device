@@ -18,8 +18,12 @@ import '../models/assistant_context.dart';
 /// - **用户自己的 Key**：允许在运行时输入，但只保留在当前页面内存里，
 ///   不落盘、不进日志、不上传给团队服务器。
 ///
+/// 支持两种取回答的方式：整段（[reply]）与流式增量（[replyStream]）。
+/// 页面在在线模式下优先走流式，让文字边出边显示。
+///
 /// 边界与风险见 `docs/assistant-model-access.md`。
-class DirectLlmAssistantProvider implements AssistantProvider {
+class DirectLlmAssistantProvider
+    implements StreamingAssistantProvider {
   DirectLlmAssistantProvider({
     required String baseUrl,
     required this.apiKey,
@@ -104,6 +108,103 @@ class DirectLlmAssistantProvider implements AssistantProvider {
     }
   }
 
+  @override
+  Stream<String> replyStream({
+    required String question,
+    required AssistantContext context,
+    List<String> references = const [],
+    List<ChatTurn> history = const [],
+  }) {
+    final trimmed = question.trim();
+    if (trimmed.isEmpty || trimmed.length > maxQuestionLength) {
+      return Stream<String>.error(
+        const AssistantException('请输入 1–1000 字的问题。'),
+      );
+    }
+    final client = HttpClient()..connectionTimeout = timeout;
+    final controller = StreamController<String>();
+    // 异步体里逐块推进，出错时把同样的固定文案经 addError 传给监听方；
+    // 所有失败分支都一样：绝不回显 Key 或上游响应体。
+    () async {
+      try {
+        await for (final chunk in _requestStream(
+          client,
+          trimmed,
+          context,
+          references,
+          history,
+        ).timeout(timeout)) {
+          if (!controller.isClosed) controller.add(chunk);
+        }
+        await controller.close();
+      } on AssistantException catch (error) {
+        if (!controller.isClosed) controller.addError(error);
+        await controller.close();
+      } on TimeoutException {
+        if (!controller.isClosed) {
+          controller.addError(
+            const AssistantException('模型服务响应超时，请稍后重试或切回本地规则。'),
+          );
+        }
+        await controller.close();
+      } on SocketException {
+        if (!controller.isClosed) {
+          controller.addError(
+            const AssistantException('无法连接模型服务，请检查地址和网络。'),
+          );
+        }
+        await controller.close();
+      } on HandshakeException {
+        if (!controller.isClosed) {
+          controller.addError(
+            const AssistantException('模型服务证书验证失败，请检查服务地址。'),
+          );
+        }
+        await controller.close();
+      } on FormatException {
+        if (!controller.isClosed) {
+          controller.addError(const AssistantException('模型服务返回格式不正确。'));
+        }
+        await controller.close();
+      } on HttpException {
+        if (!controller.isClosed) {
+          controller.addError(const AssistantException('模型服务连接中断，请重试。'));
+        }
+        await controller.close();
+      } finally {
+        client.close(force: true);
+      }
+    }();
+    return controller.stream;
+  }
+
+  /// 请求体。多轮上下文以真实的 chat message 形式插在 system 与当前问题之间。
+  Map<String, dynamic> _body(
+    String question,
+    AssistantContext context,
+    List<String> references,
+    List<ChatTurn> history, {
+    required bool stream,
+  }) => {
+    'model': model,
+    'temperature': 0,
+    if (stream) 'stream': true,
+    'messages': [
+      {
+        'role': 'system',
+        'content': history.isEmpty
+            ? assistantSystemPrompt
+            : '$assistantSystemPrompt\n$assistantHistoryNote',
+      },
+      for (final turn in history) {'role': turn.role, 'content': turn.text},
+      {
+        'role': 'user',
+        'content': assistantUserPayload(question, context,
+            references: references),
+      },
+    ],
+  };
+
   /// 所有失败分支都只说固定文案，绝不回显 Key 或上游响应体。
   Future<String> _request(
     HttpClient client,
@@ -116,28 +217,13 @@ class DirectLlmAssistantProvider implements AssistantProvider {
     request.headers.contentType = ContentType.json;
     request.headers.set(HttpHeaders.authorizationHeader, 'Bearer $apiKey');
     request.write(
-      jsonEncode({
-        'model': model,
-        'temperature': 0,
-        'messages': [
-          {'role': 'system', 'content': assistantSystemPrompt},
-          {
-            'role': 'user',
-            'content': assistantUserPayload(question, context,
-                references: references),
-          },
-        ],
-      }),
+      jsonEncode(
+        _body(question, context, references, const [], stream: false),
+      ),
     );
     final response = await request.close();
     if (response.statusCode != HttpStatus.ok) {
-      throw AssistantException(switch (response.statusCode) {
-        400 || 413 => '模型服务拒绝了请求，请检查模型名是否可用。',
-        401 || 403 => 'API Key 无效，或该 Key 无权访问所选模型。',
-        404 => '模型服务地址或模型名不正确，请检查后重试。',
-        429 => '模型服务繁忙或额度不足，请稍后重试。',
-        _ => '模型服务暂时不可用，请稍后重试或切回本地规则。',
-      });
+      throw AssistantException(_statusMessage(response.statusCode));
     }
     if (response.headers.contentType?.mimeType != 'application/json') {
       throw const AssistantException('模型服务返回格式不正确。');
@@ -151,6 +237,107 @@ class DirectLlmAssistantProvider implements AssistantProvider {
     }
     return _extractAnswer(jsonDecode(utf8.decode(bytes)));
   }
+
+  /// 流式请求：`stream: true`。服务端返回 SSE（`text/event-stream`）时逐块解析；
+  /// 少数服务端不支持流式、直接回了整段 JSON，这里兜底按单次回答返回。
+  Stream<String> _requestStream(
+    HttpClient client,
+    String question,
+    AssistantContext context,
+    List<String> references,
+    List<ChatTurn> history,
+  ) async* {
+    final request = await client.postUrl(endpoint);
+    request.followRedirects = false;
+    request.headers.contentType = ContentType.json;
+    request.headers.set(HttpHeaders.authorizationHeader, 'Bearer $apiKey');
+    request.write(
+      jsonEncode(
+        _body(question, context, references, history, stream: true),
+      ),
+    );
+    final response = await request.close();
+    if (response.statusCode != HttpStatus.ok) {
+      throw AssistantException(_statusMessage(response.statusCode));
+    }
+    final contentType = response.headers.contentType?.mimeType ?? '';
+    if (contentType == 'text/event-stream' ||
+        contentType == 'application/x-ndjson' ||
+        contentType.contains('event-stream')) {
+      yield* _parseSse(response);
+      return;
+    }
+    // 不支持流式：整段 JSON 兜底。
+    final bytes = <int>[];
+    await for (final chunk in response) {
+      if (bytes.length + chunk.length > maxResponseBytes) {
+        throw const AssistantException('模型回复过长，请缩小问题范围后重试。');
+      }
+      bytes.addAll(chunk);
+    }
+    yield _extractAnswer(jsonDecode(utf8.decode(bytes)));
+  }
+
+  /// 把 SSE 流切成「data: …」行，逐行抽 `choices[0].delta.content`。
+  ///
+  /// 按字节切行（换行符是 ASCII 0x0A），只对完整的一行做 UTF-8 解码，
+  /// 这样 chunk 边界把某个中文多字节字符切两半也不会出乱码。
+  Stream<String> _parseSse(HttpClientResponse response) async* {
+    var buffer = <int>[];
+    var total = 0;
+    await for (final chunk in response) {
+      total += chunk.length;
+      if (total > maxResponseBytes) {
+        throw const AssistantException('模型回复过长，请缩小问题范围后重试。');
+      }
+      buffer.addAll(chunk);
+      var newline = buffer.indexOf(0x0A);
+      while (newline >= 0) {
+        final line = utf8.decode(
+          buffer.sublist(0, newline),
+          allowMalformed: true,
+        );
+        buffer = buffer.sublist(newline + 1);
+        final content = _sseDelta(line);
+        if (content != null && content.isNotEmpty) yield content;
+        newline = buffer.indexOf(0x0A);
+      }
+    }
+    if (buffer.isNotEmpty) {
+      final content = _sseDelta(utf8.decode(buffer, allowMalformed: true));
+      if (content != null && content.isNotEmpty) yield content;
+    }
+  }
+
+  /// 从一行 SSE 里取增量文字；不是数据行、`[DONE]` 或解析不了就返回 null。
+  static String? _sseDelta(String line) {
+    final trimmed = line.trim();
+    if (trimmed.isEmpty || !trimmed.startsWith('data:')) return null;
+    final payload = trimmed.substring('data:'.length).trim();
+    if (payload == '[DONE]') return null;
+    try {
+      final data = jsonDecode(payload);
+      if (data is! Map<String, dynamic>) return null;
+      final choices = data['choices'];
+      if (choices is! List || choices.isEmpty || choices.first is! Map) {
+        return null;
+      }
+      final delta = (choices.first as Map)['delta'];
+      if (delta is! Map) return null;
+      final content = delta['content'];
+      return content is String ? content : null;
+    } catch (_) {
+      return null;
+    }
+  }
+
+  static String _statusMessage(int statusCode) => switch (statusCode) {
+    400 || 413 => '模型服务拒绝了请求，请检查模型名是否可用。',
+    401 || 403 => 'API Key 无效，或该 Key 无权访问所选模型。',
+    404 => '模型服务地址或模型名不正确，请检查后重试。',
+    429 => '模型服务繁忙或额度不足，请稍后重试。',
+    _ => '模型服务暂时不可用，请稍后重试或切回本地规则。',
+  };
 
   static String _extractAnswer(dynamic data) {
     if (data is! Map<String, dynamic>) {

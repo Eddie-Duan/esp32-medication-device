@@ -211,4 +211,90 @@ void main() {
       );
     }
   });
+
+  test('streaming parses SSE data lines into ordered chunks', () async {
+    await withServer(
+      (request) async {
+        final data = jsonDecode(await utf8.decoder.bind(request).join()) as Map;
+        expect(data['stream'], true);
+        request.response.headers.contentType = ContentType(
+          'text',
+          'event-stream',
+          charset: 'utf-8',
+        );
+        request.response.write('data: {"choices":[{"delta":{"content":"近 7 天"}}]}\n\n');
+        request.response.write('data: {"choices":[{"delta":{"content":"共 8 次。"}}]}\n\n');
+        request.response.write('data: [DONE]\n\n');
+        await request.response.close();
+      },
+      (baseUrl) async {
+        final chunks = await providerFor(baseUrl)
+            .replyStream(question: '最近怎么样？', context: context)
+            .toList();
+        expect(chunks, ['近 7 天', '共 8 次。']);
+      },
+    );
+  });
+
+  test('streaming falls back to one chunk when the server returns plain JSON',
+      () async {
+    await withServer(
+      (request) async {
+        request.response.headers.contentType = ContentType.json;
+        request.response.write(
+          jsonEncode({
+            'choices': [
+              {
+                'message': {'content': '近 7 天共 8 次使用动作。'},
+              },
+            ],
+          }),
+        );
+        await request.response.close();
+      },
+      (baseUrl) async {
+        final chunks = await providerFor(baseUrl)
+            .replyStream(question: '最近怎么样？', context: context)
+            .toList();
+        expect(chunks, ['近 7 天共 8 次使用动作。']);
+      },
+    );
+  });
+
+  test('streaming sends multi-turn history as messages before the question',
+      () async {
+    await withServer(
+      (request) async {
+        final data = jsonDecode(await utf8.decoder.bind(request).join()) as Map;
+        final messages = data['messages'] as List;
+        expect(messages, hasLength(4));
+        expect((messages[0] as Map)['role'], 'system');
+        expect((messages[0] as Map)['content'], contains('更早的几轮问答'));
+        expect((messages[1] as Map), {'role': 'user', 'content': '上一条问题'});
+        expect((messages[2] as Map), {
+          'role': 'assistant',
+          'content': '上一条回答',
+        });
+        expect((messages[3] as Map)['role'], 'user');
+        request.response.headers.contentType = ContentType(
+          'text',
+          'event-stream',
+        );
+        request.response.write('data: [DONE]\n\n');
+        await request.response.close();
+      },
+      (baseUrl) async {
+        await providerFor(baseUrl)
+            .replyStream(
+              question: '那今天呢？',
+              context: context,
+              history: const [
+                (role: 'user', text: '上一条问题'),
+                (role: 'assistant', text: '上一条回答'),
+              ],
+            )
+            .drain<void>();
+      },
+    );
+  });
 }
