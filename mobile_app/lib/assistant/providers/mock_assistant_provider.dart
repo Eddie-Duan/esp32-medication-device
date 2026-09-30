@@ -160,6 +160,13 @@ class MockAssistantProvider implements AssistantProvider {
           '没有记录只说明当天没有设备动作，不能确认是否服药。';
     }
 
+    // 「大字模式」这条必须排在通用「怎么办 / 建议」之前：用户会问
+    // 「字太小了怎么办」，而「怎么办」会被下面那个通用分支抢先命中，
+    // 答案就变成了统计观察（实测踩过）。
+    if (_matchesAny(normalizedQuestion, const {'大字', '字号', '字体', '字太小', '看不清'})) {
+      return '「更多」→「大字模式」把整页文字放大一档，方便阅读。';
+    }
+
     if (normalizedQuestion.contains('建议') ||
         normalizedQuestion.contains('注意') ||
         normalizedQuestion.contains('怎么办')) {
@@ -200,10 +207,6 @@ class MockAssistantProvider implements AssistantProvider {
     if (_matchesAny(normalizedQuestion, const {'朗读', '读出来', '读回答', '语音', '语速', '音调'})) {
       return '每条助手回答右下角有「朗读」按钮，用 Android 系统语音离线朗读，语音不出手机；'
           '「更多」→「朗读设置」可开自动朗读、调语速和音调。';
-    }
-
-    if (_matchesAny(normalizedQuestion, const {'大字', '字号', '字体', '字太小', '看不清'})) {
-      return '「更多」→「大字模式」把整页文字放大一档，方便阅读。';
     }
 
     if (_matchesAny(normalizedQuestion, const {

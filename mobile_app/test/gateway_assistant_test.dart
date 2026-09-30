@@ -287,7 +287,7 @@ void main() {
     });
   });
 
-  testWidgets('online setup requires consent before saving a gateway', (
+  testWidgets('online setup requires consent and a complete config', (
     tester,
   ) async {
     _useTallViewport(tester);
@@ -305,7 +305,11 @@ void main() {
     await tester.tap(find.text('保存'));
     await tester.pumpAndSettle();
     // 地址不完整时就地报错，不会存下一条用不了的配置。
-    expect(find.textContaining('请输入完整的网关地址'), findsOneWidget);
+    //
+    // 对话框现在只收「我自己的模型」——网关模式已从表单移除（网关本身也已废弃），
+    // 所以这里是模型服务地址的校验消息，不再是「请输入完整的网关地址」。
+    // 空地址在构造函数的初始化列表里就被拦下，早于 API Key / 模型名的检查。
+    expect(find.textContaining('请输入完整的模型服务地址'), findsOneWidget);
   });
 
   testWidgets(

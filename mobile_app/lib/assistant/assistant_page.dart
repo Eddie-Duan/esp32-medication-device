@@ -1118,7 +1118,9 @@ class _AssistantPageState extends State<AssistantPage> {
     if (feedback == ChatFeedback.down &&
         toggled == ChatFeedback.down &&
         message.source != ChatSource.local) {
-      final question = _questionBefore(message);
+      // 传下标而不是 message：上一步已经用 copyWith 把列表里那个对象换掉了，
+      // 再拿 message 去 indexOf 会得到 -1（这里踩过，表现为「踩了没反应」）。
+      final question = _questionBefore(index);
       if (question == null) return;
       _appendNotice('已记录这条回答没帮助（不会发送给模型）。下面用本地规则重新解释：');
       final local = await AssistantService().ask(
@@ -1133,8 +1135,10 @@ class _AssistantPageState extends State<AssistantPage> {
   }
 
   /// 这条回答对应的那个提问（往前找最近的用户消息）。
-  String? _questionBefore(ChatMessage message) {
-    final index = _messages.indexOf(message);
+  ///
+  /// 收的是**下标**而不是消息对象：调用方常常刚用 `copyWith` 替换过列表里的对象，
+  /// 那时原对象已经不在 `_messages` 里，`indexOf` 会返回 -1。
+  String? _questionBefore(int index) {
     for (var i = index - 1; i >= 0; i--) {
       if (_messages[i].isUser) return _messages[i].text;
     }

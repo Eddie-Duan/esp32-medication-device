@@ -55,7 +55,9 @@ void main() {
       ],
     };
     const context = AssistantContext();
-    const answer = '设备上的记录文件数量超过上限 256 个，需要先完成同步并提交回收。';
+    // 回验只认「N 次 / 条 / 天 / 日」这种统计口径的数字，所以这里要把 256
+    // 说成一条统计结论（「256 个」是闲聊口径，根本不会进回验，测不出 extra）。
+    const answer = '设备最多保存 256 条记录，超过后需要先同步并回收。';
 
     // 不带知识里的数字：256 不在摘要允许集合里，会被提醒「对不上」。
     expect(verifyRemoteAnswer(answer, context), contains('对不上'));
