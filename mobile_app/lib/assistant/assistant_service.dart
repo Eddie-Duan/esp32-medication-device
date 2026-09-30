@@ -110,7 +110,9 @@ class AssistantService {
       // 来自摘要，拿摘要去比对只会把正常回答误判成编造，还得跟一句莫名其妙的提醒。
       return ChatMessage(
         role: ChatRole.assistant,
-        text: '${parsed.body}\n\n$remoteKnowledgeNote',
+        // 声明放在最前面、浅色斜体渲染（见 answer_styling.dart），让用户先看到
+        // 「这不是你的设备记录」，再读正文。
+        text: '$remoteKnowledgeNote\n\n${parsed.body}',
         createdAt: DateTime.now(),
         source: ChatSource.knowledge,
       );

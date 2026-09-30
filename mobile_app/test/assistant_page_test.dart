@@ -199,6 +199,15 @@ Future<void> _ask(WidgetTester tester, String question) async {
   await tester.pumpAndSettle();
 }
 
+/// 摊平一个 [TextSpan] 树，方便断言回答正文里某段数字被上了什么色。
+List<TextSpan> _flatten(InlineSpan span) {
+  if (span is! TextSpan) return const [];
+  return [
+    span,
+    ...span.children?.expand(_flatten) ?? const <TextSpan>[],
+  ];
+}
+
 void main() {
   testWidgets('键盘弹起时不再溢出，输入的字仍然看得见', (tester) async {
     await _pump(tester);
@@ -343,7 +352,7 @@ void main() {
     expect(find.textContaining('随便问问'), findsOneWidget);
   });
 
-  testWidgets('「更多」菜单只有对话与朗读三项，不再有外观切换', (tester) async {
+  testWidgets('「更多」菜单有对话、朗读与大字三项，不再有外观切换', (tester) async {
     await _pump(tester);
 
     await tester.tap(find.byTooltip('更多'));
@@ -351,7 +360,8 @@ void main() {
     expect(find.text('清空对话'), findsOneWidget);
     expect(find.text('带上本轮对话'), findsOneWidget);
     expect(find.text('朗读设置'), findsOneWidget);
-    // 外观切换（跟随系统 / 浅色 / 深色）已按需求移除。前面三条正数断言先保证
+    expect(find.text('大字模式'), findsOneWidget);
+    // 外观切换（跟随系统 / 浅色 / 深色）已按需求移除。前面正数断言先保证
     // 菜单真的展开了，这一条才有意义（单写 findsNothing 在菜单根本没开时也会通过）。
     expect(find.textContaining('外观：'), findsNothing);
   });
@@ -456,5 +466,94 @@ void main() {
     // 再问一条，应把上一轮问答带出去。
     await _ask(tester, '那今天呢？');
     expect(provider.lastHistory, isNotEmpty);
+  });
+
+  testWidgets('「大字模式」开关落盘', (tester) async {
+    final settings = _MemorySettingsStore();
+    await _pump(tester, settingsStore: settings);
+    expect(settings.settings.largeText, isFalse);
+
+    await tester.tap(find.byTooltip('更多'));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('大字模式'));
+    await tester.pumpAndSettle();
+    expect(settings.settings.largeText, isTrue);
+  });
+
+  testWidgets('大字模式下小视口也不溢出', (tester) async {
+    await _pump(
+      tester,
+      settingsStore: _MemorySettingsStore(
+        const AssistantSettings(largeText: true),
+      ),
+      size: const Size(375, 812),
+    );
+    expect(tester.takeException(), isNull);
+  });
+
+  testWidgets('搜索对话能按正文过滤历史', (tester) async {
+    final chats = _MemoryChatStore([
+      ChatMessage(
+        role: ChatRole.user,
+        text: '昨天问过的问题',
+        createdAt: DateTime(2026, 9, 28),
+      ),
+      ChatMessage(
+        role: ChatRole.assistant,
+        text: '昨天得到的回答',
+        createdAt: DateTime(2026, 9, 28),
+        source: ChatSource.online,
+      ),
+    ]);
+    await _pump(tester, chats: chats);
+    expect(find.text('昨天问过的问题'), findsOneWidget);
+
+    await tester.tap(find.byTooltip('搜索对话'));
+    await tester.pumpAndSettle();
+    // 搜索条在输入栏之前构建，是第一个 TextField。
+    await tester.enterText(find.byType(TextField).first, '回答');
+    await tester.pumpAndSettle();
+
+    expect(find.text('昨天问过的问题'), findsNothing);
+    expect(find.text('昨天得到的回答'), findsOneWidget);
+  });
+
+  testWidgets('答完后给出「接着问」追问', (tester) async {
+    await _pump(
+      tester,
+      service: AssistantService(provider: _FixedAnswer('今天使用 2 次。')),
+    );
+    await _ask(tester, '今天用了几次？');
+
+    expect(find.text('接着问'), findsOneWidget);
+    // 追问用 InputChip，不与底部固定的 ActionChip 快捷问题混在一起。
+    expect(find.byType(InputChip), findsNWidgets(3));
+  });
+
+  testWidgets('摘要卡显示同步状态徽章', (tester) async {
+    await _pump(tester);
+    // 默认 context 非演示且无同步时间 → 「尚未同步」。
+    expect(find.text('尚未同步'), findsOneWidget);
+  });
+
+  testWidgets('回答正文里个人数据数字标蓝', (tester) async {
+    await _pump(
+      tester,
+      service: AssistantService(provider: _FixedAnswer('今天使用 2 次。')),
+    );
+    await _ask(tester, '今天用了几次？');
+
+    final answerText = tester
+        .widgetList<Text>(
+          find.byWidgetPredicate(
+            (widget) => widget is Text && widget.textSpan != null,
+          ),
+        )
+        .firstWhere(
+          (text) => text.textSpan!.toPlainText().contains('今天使用 2 次'),
+        );
+
+    final data = _flatten(answerText.textSpan!).where((s) => s.text == '2').single;
+    expect(data.style?.color, const Color(0xff1565c0));
   });
 }

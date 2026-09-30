@@ -2,7 +2,7 @@ import 'dart:convert';
 
 import 'package:shared_preferences/shared_preferences.dart';
 
-/// 助手页的本地偏好：多轮上下文开关、自动朗读、朗读语速/音调。
+/// 助手页的本地偏好：多轮上下文开关、自动朗读、朗读语速/音调、大字模式。
 ///
 /// 与聊天记录同属「便利」类偏好（见 `AssistantChatStore` 的注释）：
 /// 读不到就用默认值，写不进去也只影响下次打开，不打断当前对话。
@@ -13,6 +13,7 @@ class AssistantSettings {
     this.autoSpeak = false,
     this.speechRate = 0.5,
     this.speechPitch = 1.0,
+    this.largeText = false,
   });
 
   /// 是否把本轮更早的问答带给在线模型（默认关）。
@@ -27,6 +28,9 @@ class AssistantSettings {
   /// 音调，flutter_tts 取值 0.5–2.0（1.0 为正常）。
   final double speechPitch;
 
+  /// 大字模式（默认关）：把助手页整体字号放大一档，方便长辈阅读。
+  final bool largeText;
+
   static const defaults = AssistantSettings();
 
   AssistantSettings copyWith({
@@ -34,12 +38,14 @@ class AssistantSettings {
     bool? autoSpeak,
     double? speechRate,
     double? speechPitch,
+    bool? largeText,
   }) =>
       AssistantSettings(
         sendHistory: sendHistory ?? this.sendHistory,
         autoSpeak: autoSpeak ?? this.autoSpeak,
         speechRate: speechRate ?? this.speechRate,
         speechPitch: speechPitch ?? this.speechPitch,
+        largeText: largeText ?? this.largeText,
       );
 
   Map<String, dynamic> toJson() => {
@@ -47,6 +53,7 @@ class AssistantSettings {
     'auto_speak': autoSpeak,
     'speech_rate': speechRate,
     'speech_pitch': speechPitch,
+    'large_text': largeText,
   };
 
   /// 解析偏好；任何无法识别的输入都退回默认值，调用方不用区分坏档。
@@ -61,6 +68,7 @@ class AssistantSettings {
       autoSpeak: flag(data['auto_speak'], false),
       speechRate: number(data['speech_rate'], 0.5),
       speechPitch: number(data['speech_pitch'], 1.0),
+      largeText: flag(data['large_text'], false),
     );
   }
 }

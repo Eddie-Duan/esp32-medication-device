@@ -10,6 +10,9 @@ import 'assistant_service.dart';
 import 'assistant_settings.dart';
 import 'assistant_exception.dart';
 import 'assistant_tts.dart';
+import 'answer_styling.dart';
+import 'follow_up_suggestions.dart';
+import 'sync_status.dart';
 import 'models/assistant_context.dart';
 import 'models/chat_message.dart';
 
@@ -81,6 +84,13 @@ class _AssistantPageState extends State<AssistantPage> {
   /// 在线流式回答进行中；此时显示逐字滚动的文本而不是「正在询问…」。
   bool _streaming = false;
   String _streamText = '';
+
+  /// 对话搜索：开关 + 查询词。
+  bool _searching = false;
+  String _searchQuery = '';
+
+  /// 大字模式（默认关）。开启后整页字号放大一档。
+  bool _largeText = false;
 
   @override
   void initState() {
@@ -191,6 +201,7 @@ class _AssistantPageState extends State<AssistantPage> {
       _autoSpeak = settings.autoSpeak;
       _speechRate = settings.speechRate;
       _speechPitch = settings.speechPitch;
+      _largeText = settings.largeText;
     });
   }
 
@@ -204,6 +215,7 @@ class _AssistantPageState extends State<AssistantPage> {
         autoSpeak: _autoSpeak,
         speechRate: _speechRate,
         speechPitch: _speechPitch,
+        largeText: _largeText,
       ),
     ),
   );
@@ -420,6 +432,11 @@ class _AssistantPageState extends State<AssistantPage> {
       child: const Text('带上本轮对话'),
     ),
     const PopupMenuItem(value: 'speech', child: Text('朗读设置')),
+    CheckedPopupMenuItem(
+      value: 'largeText',
+      checked: _largeText,
+      child: const Text('大字模式'),
+    ),
   ];
 
   Widget _buildOverflowMenu() => PopupMenuButton<String>(
@@ -439,11 +456,20 @@ class _AssistantPageState extends State<AssistantPage> {
     }
     if (value == 'speech') {
       await _showSpeechSettings();
+      return;
+    }
+    if (value == 'largeText') {
+      _toggleLargeText();
     }
   }
 
   Future<void> _toggleHistory() async {
     setState(() => _sendHistory = !_sendHistory);
+    _persistSettings();
+  }
+
+  Future<void> _toggleLargeText() async {
+    setState(() => _largeText = !_largeText);
     _persistSettings();
   }
 
@@ -548,10 +574,18 @@ class _AssistantPageState extends State<AssistantPage> {
   @override
   Widget build(BuildContext context) {
     final accent = _service.isRemote ? _onlineAccent : _localAccent;
-    return Scaffold(
+    final page = Scaffold(
       appBar: AppBar(
         title: const Text('用药记录助手'),
         actions: [
+          IconButton(
+            onPressed: () => setState(() {
+              _searching = !_searching;
+              _searchQuery = '';
+            }),
+            icon: Icon(_searching ? Icons.search_off : Icons.search),
+            tooltip: '搜索对话',
+          ),
           IconButton(
             onPressed: _sending ? null : _openConsole,
             icon: Icon(Icons.settings_outlined, color: accent),
@@ -567,15 +601,22 @@ class _AssistantPageState extends State<AssistantPage> {
         child: Column(
           children: [
             _buildModeBar(),
+            if (_searching) _buildSearchBar(),
             Expanded(
               child: ListView(
                 controller: _scrollController,
                 padding: const EdgeInsets.fromLTRB(16, 4, 16, 12),
                 children: [
-                  _buildSummaryCard(),
-                  for (final message in _messages) _buildMessage(message),
-                  if (_sending && !_streaming) _buildThinkingBubble(),
-                  if (_streaming) _buildStreamingBubble(),
+                  // 搜索时收起始摘要卡，聚焦结果；搜索词为空仍显示摘要。
+                  if (!_searching || _searchQuery.trim().isEmpty)
+                    _buildSummaryCard(),
+                  for (final message in _visibleMessages())
+                    _buildMessage(message),
+                  if (!_searching) ...[
+                    if (_sending && !_streaming) _buildThinkingBubble(),
+                    if (_streaming) _buildStreamingBubble(),
+                    _buildFollowUps(),
+                  ],
                 ],
               ),
             ),
@@ -585,6 +626,18 @@ class _AssistantPageState extends State<AssistantPage> {
           ],
         ),
       ),
+    );
+
+    // 大字模式：在系统字号基础上再放大一档，方便长辈阅读。
+    if (!_largeText) return page;
+    final systemScale = MediaQuery.textScalerOf(context).scale(1.0);
+    // clamp 返回 num，TextScaler.linear 要 double，这里显式转回 double。
+    final largeScale = (systemScale * 1.25).clamp(1.0, 2.2).toDouble();
+    return MediaQuery(
+      data: MediaQuery.of(context).copyWith(
+        textScaler: TextScaler.linear(largeScale),
+      ),
+      child: page,
     );
   }
 
@@ -685,6 +738,11 @@ class _AssistantPageState extends State<AssistantPage> {
         padding: const EdgeInsets.all(12),
         child: Column(
           children: [
+            Align(
+              alignment: Alignment.centerLeft,
+              child: _buildSyncBadge(data),
+            ),
+            const SizedBox(height: 10),
             Row(
               mainAxisAlignment: MainAxisAlignment.spaceAround,
               children: [
@@ -718,8 +776,33 @@ class _AssistantPageState extends State<AssistantPage> {
     );
   }
 
+  /// 同步状态徽章：演示/未同步/可能不是最新/已同步，一眼看出数据新不新。
+  Widget _buildSyncBadge(AssistantContext data) {
+    final status = syncStatus(data, DateTime.now());
+    final (icon, color) = switch (status) {
+      SyncStatus.demo => (Icons.science_outlined, const Color(0xff8a6d1f)),
+      SyncStatus.never => (Icons.sync_disabled, const Color(0xffc62828)),
+      SyncStatus.stale => (Icons.sync_problem, const Color(0xffc62828)),
+      SyncStatus.fresh => (
+        Icons.check_circle_outline,
+        const Color(0xff2e7d32),
+      ),
+    };
+    return Row(
+      mainAxisSize: MainAxisSize.min,
+      children: [
+        Icon(icon, size: 14, color: color),
+        const SizedBox(width: 4),
+        Text(
+          syncStatusLabel(status),
+          style: Theme.of(context).textTheme.labelSmall?.copyWith(color: color),
+        ),
+      ],
+    );
+  }
+
   /// 把助手实际读到的逐日数据画出来，让用户看得见助手“知道什么”，
-  /// 而不是只面对三个汇总数字。
+  /// 而不是只面对三个汇总数字。点某根柱子可以看当天确切次数。
   Widget _buildDailyBars(AssistantContext data) {
     final max = data.dailyCounts.fold<int>(
       1,
@@ -730,6 +813,7 @@ class _AssistantPageState extends State<AssistantPage> {
     final scale = MediaQuery.textScalerOf(context).scale(1);
     const barAreaHeight = 52.0;
     const maxBarHeight = 28.0;
+    final scheme = Theme.of(context).colorScheme;
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
@@ -749,26 +833,39 @@ class _AssistantPageState extends State<AssistantPage> {
                     label:
                         '第 ${index + 1} 天，${data.dailyCounts[index]} 次使用动作',
                     excludeSemantics: true,
-                    child: Column(
-                      mainAxisAlignment: MainAxisAlignment.end,
-                      children: [
-                        Text(
-                          '${data.dailyCounts[index]}',
-                          style: const TextStyle(fontSize: 10),
-                        ),
-                        const SizedBox(height: 4),
-                        Container(
-                          width: 14,
-                          height: math.max(
-                            3,
-                            data.dailyCounts[index] / max * maxBarHeight * scale,
+                    child: GestureDetector(
+                      behavior: HitTestBehavior.opaque,
+                      onTap: () => _showDayCount(
+                        index,
+                        data.dailyCounts[index],
+                        isToday: index == data.dailyCounts.length - 1,
+                      ),
+                      child: Column(
+                        mainAxisAlignment: MainAxisAlignment.end,
+                        children: [
+                          Text(
+                            '${data.dailyCounts[index]}',
+                            style: const TextStyle(fontSize: 10),
                           ),
-                          decoration: BoxDecoration(
-                            color: Theme.of(context).colorScheme.primary,
-                            borderRadius: BorderRadius.circular(4),
+                          const SizedBox(height: 4),
+                          Container(
+                            width: 14,
+                            height: math.max(
+                              3,
+                              data.dailyCounts[index] / max * maxBarHeight * scale,
+                            ),
+                            decoration: BoxDecoration(
+                              color: _barColor(
+                                index,
+                                data.dailyCounts[index],
+                                data.dailyCounts.length,
+                                scheme,
+                              ),
+                              borderRadius: BorderRadius.circular(4),
+                            ),
                           ),
-                        ),
-                      ],
+                        ],
+                      ),
                     ),
                   ),
                 ),
@@ -783,6 +880,24 @@ class _AssistantPageState extends State<AssistantPage> {
         ),
       ],
     );
+  }
+
+  /// 柱子的颜色：今天实心强调，其余淡色，空档日用更浅的占位色。
+  Color _barColor(int index, int count, int length, ColorScheme scheme) {
+    if (index == length - 1) return scheme.primary;
+    if (count == 0) return scheme.outlineVariant;
+    return scheme.primary.withOpacity(0.5);
+  }
+
+  void _showDayCount(int index, int count, {required bool isToday}) {
+    ScaffoldMessenger.of(context)
+      ..hideCurrentSnackBar()
+      ..showSnackBar(
+        SnackBar(
+          content: Text('${isToday ? '今天' : '第 ${index + 1} 天'} · $count 次使用动作'),
+          duration: const Duration(seconds: 2),
+        ),
+      );
   }
 
   Widget _summaryItem(String title, String value) {
@@ -871,7 +986,8 @@ class _AssistantPageState extends State<AssistantPage> {
                 _buildSourceBadge(source),
                 const SizedBox(height: 4),
               ],
-              Text(message.text),
+              // 助手回答带强调：声明浅色、个人数据蓝色、问题红色、正文黑色。
+              if (message.isUser) Text(message.text) else _buildAnswerText(message),
               // 助手回答可以朗读：Android 系统 TTS，离线、语音不出手机。
               if (!message.isUser) ...[
                 const SizedBox(height: 2),
@@ -917,6 +1033,43 @@ class _AssistantPageState extends State<AssistantPage> {
         tapTargetSize: MaterialTapTargetSize.shrinkWrap,
       ),
     );
+  }
+
+  /// 回答正文：把声明/个人数据/问题/正文拆成不同样式（见 answer_styling.dart）。
+  Widget _buildAnswerText(ChatMessage message) {
+    // 通用知识回答里的数字是科普（如「全球约 3 亿人」），不是用户记录，不标蓝。
+    final dataNumbers = message.source == ChatSource.knowledge
+        ? const <int>{}
+        : personalDataNumbers(_context);
+    final spans = styleAnswer(message.text, dataNumbers: dataNumbers);
+    return Text.rich(
+      TextSpan(
+        children: [
+          for (final span in spans)
+            TextSpan(text: span.text, style: _spanStyle(span.kind)),
+        ],
+      ),
+    );
+  }
+
+  /// 每种强调的样式。单套浅色主题下的固定值，不随模式切换。
+  TextStyle _spanStyle(AnswerSpanKind kind) {
+    final base = Theme.of(context).textTheme.bodyMedium;
+    return switch (kind) {
+      AnswerSpanKind.notice => (base ?? const TextStyle()).copyWith(
+        color: const Color(0xff6b7280),
+        fontStyle: FontStyle.italic,
+      ),
+      AnswerSpanKind.data => (base ?? const TextStyle()).copyWith(
+        color: const Color(0xff1565c0),
+        fontWeight: FontWeight.w600,
+      ),
+      AnswerSpanKind.alert => (base ?? const TextStyle()).copyWith(
+        color: const Color(0xffc62828),
+        fontWeight: FontWeight.w600,
+      ),
+      AnswerSpanKind.plain => base ?? const TextStyle(),
+    };
   }
 
   /// 切换上游的分隔提示：居中的淡色小字，不是气泡——它不是谁说的话。
@@ -999,6 +1152,82 @@ class _AssistantPageState extends State<AssistantPage> {
       ),
     ),
   );
+
+  /// 搜索条：搜索对话正文（含用户提问与助手回答），不联服务器。
+  Widget _buildSearchBar() {
+    return Padding(
+      padding: const EdgeInsets.fromLTRB(16, 0, 16, 8),
+      child: Row(
+        children: [
+          Expanded(
+            child: TextField(
+              autofocus: true,
+              decoration: const InputDecoration(
+                hintText: '搜索对话',
+                prefixIcon: Icon(Icons.search),
+                isDense: true,
+                border: OutlineInputBorder(),
+              ),
+              onChanged: (value) => setState(() => _searchQuery = value),
+            ),
+          ),
+          IconButton(
+            onPressed: () => setState(() {
+              _searching = false;
+              _searchQuery = '';
+            }),
+            icon: const Icon(Icons.close),
+            tooltip: '关闭搜索',
+          ),
+        ],
+      ),
+    );
+  }
+
+  /// 当前要展示的消息：搜索时只留正文命中查询词的。
+  List<ChatMessage> _visibleMessages() {
+    final query = _searchQuery.trim().toLowerCase();
+    if (!_searching || query.isEmpty) return _messages;
+    return [
+      for (final message in _messages)
+        if (message.text.toLowerCase().contains(query)) message,
+    ];
+  }
+
+  /// 追问建议：基于最近一次提问给 2–3 个「接着问」。没有提问时不显示。
+  Widget _buildFollowUps() {
+    final lastQuestion = _lastUserQuestion();
+    if (lastQuestion == null || _sending) return const SizedBox.shrink();
+    final suggestions = followUpsFor(lastQuestion);
+    return Padding(
+      padding: const EdgeInsets.only(top: 4, bottom: 8),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Text('接着问', style: Theme.of(context).textTheme.labelSmall),
+          const SizedBox(height: 6),
+          Wrap(
+            spacing: 6,
+            runSpacing: 4,
+            children: [
+              for (final suggestion in suggestions)
+                InputChip(
+                  label: Text(suggestion),
+                  onPressed: _sending ? null : () => _send(suggestion),
+                ),
+            ],
+          ),
+        ],
+      ),
+    );
+  }
+
+  String? _lastUserQuestion() {
+    for (final message in _messages.reversed) {
+      if (message.isUser) return message.text;
+    }
+    return null;
+  }
 
   /// 快捷问题。每个都能在本地模式下拿到确定答案，不靠在线模型。
   static const _quickQuestions = [
