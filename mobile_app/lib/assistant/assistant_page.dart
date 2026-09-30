@@ -3,11 +3,11 @@ import 'dart:math' as math;
 
 import 'package:flutter/material.dart';
 
-import '../theme/app_theme.dart';
 import 'assistant_api_console.dart';
 import 'assistant_chat_store.dart';
 import 'assistant_credentials.dart';
 import 'assistant_service.dart';
+import 'assistant_settings.dart';
 import 'assistant_exception.dart';
 import 'assistant_tts.dart';
 import 'models/assistant_context.dart';
@@ -28,8 +28,8 @@ class AssistantPage extends StatefulWidget {
     this.contextLoader,
     this.store,
     this.chatStore,
-    this.themeController,
     this.speaker,
+    this.settingsStore,
   });
 
   final AssistantService? service;
@@ -42,11 +42,11 @@ class AssistantPage extends StatefulWidget {
   /// 聊天记录存储。测试注入内存实现；默认写本机偏好存储。
   final AssistantChatStore? chatStore;
 
-  /// 外观设置。为空时不显示「外观」菜单项（点了没反应比不显示更糟）。
-  final AppThemeController? themeController;
-
   /// 朗读回答用的引擎。测试注入假实现；默认用 Android 系统 TTS（离线、不出手机）。
   final AssistantSpeaker? speaker;
+
+  /// 朗读与多轮偏好的存储。测试注入内存实现；默认写本机偏好存储。
+  final AssistantSettingsStore? settingsStore;
 
   @override
   State<AssistantPage> createState() => _AssistantPageState();
@@ -66,17 +66,36 @@ class _AssistantPageState extends State<AssistantPage> {
   AssistantSpeaker? _speaker;
   bool _ownsSpeaker = false;
 
+  late final AssistantSettingsStore _settingsStore;
+
+  /// 多轮对话开关：默认关。开启后只有「我的模型」直连时才把本轮更早问答带出去。
+  bool _sendHistory = false;
+
+  /// 回答后自动朗读开关：默认关。
+  bool _autoSpeak = false;
+
+  /// 朗读语速/音调，取值与 flutter_tts 一致（0–1 / 0.5–2）。
+  double _speechRate = 0.5;
+  double _speechPitch = 1.0;
+
+  /// 在线流式回答进行中；此时显示逐字滚动的文本而不是「正在询问…」。
+  bool _streaming = false;
+  String _streamText = '';
+
   @override
   void initState() {
     super.initState();
     _service = widget.service ?? AssistantService();
     _store = widget.store ?? SecureAssistantCredentialsStore();
     _chatStore = widget.chatStore ?? SharedPreferencesAssistantChatStore();
+    _settingsStore =
+        widget.settingsStore ?? SharedPreferencesAssistantSettingsStore();
     _context = widget.assistantContext;
     _inputController = TextEditingController();
     _scrollController = ScrollController();
     _messages = [_welcomeMessage()];
     unawaited(_loadHistory());
+    unawaited(_loadSettings());
   }
 
   @override
@@ -101,7 +120,12 @@ class _AssistantPageState extends State<AssistantPage> {
 
   Future<void> _speak(String text) async {
     try {
-      await _resolvedSpeaker.speak(text);
+      final speaker = _resolvedSpeaker;
+      // 先停掉上一句再读新的：同一时刻只有一段语音（「只读最新一句」）。
+      await speaker.setRate(_speechRate);
+      await speaker.setPitch(_speechPitch);
+      await speaker.stop();
+      await speaker.speak(text);
     } catch (_) {
       // 引擎缺失/初始化失败是设备差异，不是错误路径里要回显的东西；
       // 只给一句固定提示，不让用户以为按了没反应。
@@ -110,6 +134,26 @@ class _AssistantPageState extends State<AssistantPage> {
         context,
       ).showSnackBar(const SnackBar(content: Text('此设备暂不支持朗读。')));
     }
+  }
+
+  /// 已经创建的朗读引擎；没有就返回 null（注入的优先）。
+  AssistantSpeaker? get _existingSpeaker => widget.speaker ?? _speaker;
+
+  /// 新问题开始时停掉上一段回答。没有引擎时不创建——别为「停一下」碰平台通道。
+  Future<void> _stopSpeaking() async {
+    final speaker = _existingSpeaker;
+    if (speaker == null) return;
+    try {
+      await speaker.stop();
+    } catch (_) {
+      // 引擎报错不影响提问流程。
+    }
+  }
+
+  /// 开了自动朗读就播最新回答；不 await，别让朗读卡住界面。
+  void _maybeAutoSpeak(String text) {
+    if (!_autoSpeak) return;
+    unawaited(_speak(text));
   }
 
   /// 开场白是 App 自己写的，不带来源标（它不是哪个上游的回答）。
@@ -138,13 +182,42 @@ class _AssistantPageState extends State<AssistantPage> {
   ///
   /// 故意不 await：写失败也只是这次没存上（见 [AssistantChatStore] 的失败语义），
   /// 不该让发送流程等磁盘。
+  /// 读本机偏好。读不到就用默认值（多轮关、自动朗读关、正常语速/音调）。
+  Future<void> _loadSettings() async {
+    final settings = await _settingsStore.load();
+    if (!mounted) return;
+    setState(() {
+      _sendHistory = settings.sendHistory;
+      _autoSpeak = settings.autoSpeak;
+      _speechRate = settings.speechRate;
+      _speechPitch = settings.speechPitch;
+    });
+  }
+
   void _persistHistory() => unawaited(_chatStore.save(List.of(_messages)));
+
+  /// 偏好落盘。故意不 await：写失败也只影响下次打开，不该打断当前对话。
+  void _persistSettings() => unawaited(
+    _settingsStore.save(
+      AssistantSettings(
+        sendHistory: _sendHistory,
+        autoSpeak: _autoSpeak,
+        speechRate: _speechRate,
+        speechPitch: _speechPitch,
+      ),
+    ),
+  );
 
   Future<void> _send([String? preset]) async {
     final question = (preset ?? _inputController.text).trim();
     if (question.isEmpty || _sending) return;
 
+    // 新问题先停掉上一段朗读：正在读的旧回答不该盖过新问题。
+    await _stopSpeaking();
+
     _inputController.clear();
+    // 多轮上下文只取「本轮更早的」消息：先快照，再追加新提问。
+    final history = _sendHistory ? List.of(_messages) : const <ChatMessage>[];
     setState(() {
       _messages.add(
         ChatMessage(
@@ -154,6 +227,8 @@ class _AssistantPageState extends State<AssistantPage> {
         ),
       );
       _sending = true;
+      _streaming = false;
+      _streamText = '';
     });
     _persistHistory();
     _scrollToBottom();
@@ -167,35 +242,89 @@ class _AssistantPageState extends State<AssistantPage> {
           await widget.contextLoader?.call() ?? widget.assistantContext;
       if (!mounted) return;
       setState(() => _context = latestContext);
-      final answer = await _service.ask(
-        question: question,
-        context: latestContext,
-      );
-      if (!mounted) return;
-      setState(() => _messages.add(answer));
-      _persistHistory();
+
+      if (wasRemote && _service.supportsStreaming) {
+        await _streamAnswer(question, latestContext, history);
+      } else {
+        final answer = await _service.ask(
+          question: question,
+          context: latestContext,
+        );
+        if (!mounted) return;
+        setState(() => _messages.add(answer));
+        _persistHistory();
+        _maybeAutoSpeak(answer.text);
+      }
     } catch (error) {
       if (!mounted) return;
-      setState(() {
-        _messages.add(
-          ChatMessage(
-            role: ChatRole.assistant,
-            text: error is AssistantException
-                ? error.message
-                : '暂时无法读取记录或获取回答，请稍后重试。',
-            createdAt: DateTime.now(),
-            source: wasRemote ? ChatSource.online : ChatSource.local,
-          ),
-        );
-      });
+      setState(() => _messages.add(_errorMessage(error, wasRemote: wasRemote)));
       _persistHistory();
     } finally {
       if (mounted) {
-        setState(() => _sending = false);
+        setState(() {
+          _sending = false;
+          _streaming = false;
+          _streamText = '';
+        });
         _scrollToBottom();
       }
     }
   }
+
+  /// 在线流式回答：把逐块文本接进 `_streamText`，流结束后落定成一条消息。
+  ///
+  /// 错误不在这里吞掉，抛给 `_send` 的 catch 统一转成固定文案气泡——这样流式
+  /// 与非流式的失败路径长得一模一样，也不会回显 Key 或上游响应体。
+  Future<void> _streamAnswer(
+    String question,
+    AssistantContext latestContext,
+    List<ChatMessage> history,
+  ) async {
+    final result = _service.streamAsk(
+      question: question,
+      context: latestContext,
+      history: history,
+    );
+    setState(() {
+      _streaming = true;
+      _streamText = '';
+    });
+    final buffer = StringBuffer();
+    await for (final chunk in result.stream) {
+      buffer.write(chunk);
+      if (!mounted) return;
+      setState(() => _streamText = buffer.toString());
+      _jumpToBottom();
+    }
+    final raw = buffer.toString().trim();
+    if (raw.isEmpty) {
+      throw const AssistantException('模型服务没有返回文字。');
+    }
+    if (!mounted) return;
+    final message = _service.finalizeRemote(
+      raw,
+      latestContext,
+      extra: result.referenceNumbers,
+    );
+    setState(() {
+      _messages.add(message);
+      _streaming = false;
+      _streamText = '';
+    });
+    _persistHistory();
+    _maybeAutoSpeak(message.text);
+  }
+
+  /// 失败气泡：来源按提问那一刻的上游标，文案固定、不回显任何上游内容。
+  ChatMessage _errorMessage(Object error, {required bool wasRemote}) =>
+      ChatMessage(
+        role: ChatRole.assistant,
+        text: error is AssistantException
+            ? error.message
+            : '暂时无法读取记录或获取回答，请稍后重试。',
+        createdAt: DateTime.now(),
+        source: wasRemote ? ChatSource.online : ChatSource.local,
+      );
 
   /// 切换上游。回本地是一步；切在线时如果已经配置过 API 也是一步。
   Future<void> _changeMode(bool remote) async {
@@ -216,8 +345,11 @@ class _AssistantPageState extends State<AssistantPage> {
     _appendNotice(_onlineNotice);
   }
 
-  static const _onlineNotice =
-      '已启用在线助手。每次提问只发送本次问题和当前统计摘要；历史对话不上传。';
+  /// 切到在线的分隔提示。多轮开关开启时，文案要如实说明会把本轮问答带出去。
+  String get _onlineNotice => _sendHistory
+      ? '已启用在线助手。每次提问发送本次问题、当前统计摘要和本轮更早的问答；'
+            '原始记录与设备标识不上传。'
+      : '已启用在线助手。每次提问只发送本次问题和当前统计摘要；历史对话不上传。';
 
   Future<void> _openConsole() async {
     if (_sending) return;
@@ -280,55 +412,118 @@ class _AssistantPageState extends State<AssistantPage> {
     _persistHistory();
   }
 
-  List<PopupMenuEntry<String>> _menuItems(ThemeMode? mode) => [
+  List<PopupMenuEntry<String>> _menuItems() => [
     const PopupMenuItem(value: 'clear', child: Text('清空对话')),
-    if (mode != null) ...[
-      const PopupMenuDivider(),
-      CheckedPopupMenuItem(
-        value: 'system',
-        checked: mode == ThemeMode.system,
-        child: const Text('外观：跟随系统'),
-      ),
-      CheckedPopupMenuItem(
-        value: 'light',
-        checked: mode == ThemeMode.light,
-        child: const Text('外观：浅色'),
-      ),
-      CheckedPopupMenuItem(
-        value: 'dark',
-        checked: mode == ThemeMode.dark,
-        child: const Text('外观：深色'),
-      ),
-    ],
+    CheckedPopupMenuItem(
+      value: 'history',
+      checked: _sendHistory,
+      child: const Text('带上本轮对话'),
+    ),
+    const PopupMenuItem(value: 'speech', child: Text('朗读设置')),
   ];
 
-  Widget _buildOverflowMenu() {
-    final theme = widget.themeController;
-    if (theme == null) {
-      return PopupMenuButton<String>(
-        tooltip: '更多',
-        onSelected: _onMenuSelected,
-        itemBuilder: (_) => _menuItems(null),
-      );
-    }
-    // 勾选状态要跟着当前模式走，所以菜单本身也要监听。
-    return ValueListenableBuilder<ThemeMode>(
-      valueListenable: theme.mode,
-      builder: (context, mode, _) => PopupMenuButton<String>(
-        tooltip: '更多',
-        onSelected: _onMenuSelected,
-        itemBuilder: (_) => _menuItems(mode),
-      ),
-    );
-  }
+  Widget _buildOverflowMenu() => PopupMenuButton<String>(
+    tooltip: '更多',
+    onSelected: _onMenuSelected,
+    itemBuilder: (_) => _menuItems(),
+  );
 
   Future<void> _onMenuSelected(String value) async {
     if (value == 'clear') {
       await _clearConversation();
       return;
     }
-    final theme = widget.themeController;
-    if (theme != null) await theme.setMode(parseThemeMode(value));
+    if (value == 'history') {
+      await _toggleHistory();
+      return;
+    }
+    if (value == 'speech') {
+      await _showSpeechSettings();
+    }
+  }
+
+  Future<void> _toggleHistory() async {
+    setState(() => _sendHistory = !_sendHistory);
+    _persistSettings();
+  }
+
+  /// 朗读设置：自动朗读开关 + 语速/音调滑杆。保存后立即生效并落盘。
+  Future<void> _showSpeechSettings() async {
+    var autoSpeak = _autoSpeak;
+    var rate = _speechRate;
+    var pitch = _speechPitch;
+    final confirmed = await showDialog<bool>(
+      context: context,
+      builder: (dialogContext) => StatefulBuilder(
+        builder: (context, setDialogState) => AlertDialog(
+          title: const Text('朗读设置'),
+          content: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              SwitchListTile(
+                contentPadding: EdgeInsets.zero,
+                title: const Text('回答后自动朗读'),
+                subtitle: const Text('新问题会打断上一段朗读'),
+                value: autoSpeak,
+                onChanged: (value) =>
+                    setDialogState(() => autoSpeak = value),
+              ),
+              ListTile(
+                contentPadding: EdgeInsets.zero,
+                title: Text('语速 · ${_rateLabel(rate)}'),
+                subtitle: Slider(
+                  value: rate,
+                  min: 0,
+                  max: 1,
+                  divisions: 10,
+                  onChanged: (value) => setDialogState(() => rate = value),
+                ),
+              ),
+              ListTile(
+                contentPadding: EdgeInsets.zero,
+                title: Text('音调 · ${_pitchLabel(pitch)}'),
+                subtitle: Slider(
+                  value: pitch,
+                  min: 0.5,
+                  max: 2,
+                  divisions: 15,
+                  onChanged: (value) => setDialogState(() => pitch = value),
+                ),
+              ),
+            ],
+          ),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.pop(dialogContext, false),
+              child: const Text('取消'),
+            ),
+            FilledButton(
+              onPressed: () => Navigator.pop(dialogContext, true),
+              child: const Text('保存'),
+            ),
+          ],
+        ),
+      ),
+    );
+    if (confirmed != true || !mounted) return;
+    setState(() {
+      _autoSpeak = autoSpeak;
+      _speechRate = rate;
+      _speechPitch = pitch;
+    });
+    _persistSettings();
+  }
+
+  String _rateLabel(double rate) => switch (rate) {
+    <= 0.25 => '慢',
+    >= 0.75 => '快',
+    _ => '正常',
+  };
+
+  String _pitchLabel(double pitch) {
+    if (pitch < 0.85) return '低';
+    if (pitch > 1.15) return '高';
+    return '正常';
   }
 
   void _scrollToBottom() {
@@ -339,6 +534,14 @@ class _AssistantPageState extends State<AssistantPage> {
         duration: const Duration(milliseconds: 200),
         curve: Curves.easeOut,
       );
+    });
+  }
+
+  /// 流式输出逐块刷新时用直接跳到底部，避免每个 chunk 都发起一段滚动动画叠起来。
+  void _jumpToBottom() {
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (!_scrollController.hasClients) return;
+      _scrollController.jumpTo(_scrollController.position.maxScrollExtent);
     });
   }
 
@@ -371,7 +574,8 @@ class _AssistantPageState extends State<AssistantPage> {
                 children: [
                   _buildSummaryCard(),
                   for (final message in _messages) _buildMessage(message),
-                  if (_sending) _buildThinkingBubble(),
+                  if (_sending && !_streaming) _buildThinkingBubble(),
+                  if (_streaming) _buildStreamingBubble(),
                 ],
               ),
             ),
@@ -445,7 +649,7 @@ class _AssistantPageState extends State<AssistantPage> {
       width: double.infinity,
       padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
       decoration: BoxDecoration(
-        color: _assistantBubbleColor(context, ChatSource.online),
+        color: _assistantBubbleColor(ChatSource.online),
         borderRadius: BorderRadius.circular(10),
       ),
       child: Row(
@@ -454,13 +658,16 @@ class _AssistantPageState extends State<AssistantPage> {
           Icon(
             Icons.privacy_tip_outlined,
             size: 16,
-            color: _sourceAccent(context, ChatSource.online),
+            color: _sourceAccent(ChatSource.online),
           ),
           const SizedBox(width: 8),
           Expanded(
             child: Text(
-              '每次提问只把「本次问题 + 上方摘要」发给在线模型，'
-              '不发送原始记录、设备标识或历史对话。',
+              _sendHistory
+                  ? '每次提问把「本次问题 + 上方摘要 + 本轮更早的问答」发给你的模型；'
+                        '原始记录与设备标识不上传。'
+                  : '每次提问只把「本次问题 + 上方摘要」发给在线模型，'
+                        '不发送原始记录、设备标识或历史对话。',
               style: Theme.of(context).textTheme.bodySmall,
             ),
           ),
@@ -599,28 +806,22 @@ class _AssistantPageState extends State<AssistantPage> {
 
   /// 助手气泡的底色。
   ///
-  /// 深色模式不能沿用浅色模式的淡底：淡底配深色模式下的浅色文字会读不出来，
-  /// 所以两套都写出来，只按当前亮度取值。
-  Color _assistantBubbleColor(BuildContext context, ChatSource? source) {
-    final dark = Theme.of(context).brightness == Brightness.dark;
+  /// 只有一套浅色主题（外观切换已移除），所以每个来源只写一种颜色，
+  /// 不再按 `Brightness` 分深浅两套。
+  Color _assistantBubbleColor(ChatSource? source) {
     return switch (source) {
-      ChatSource.knowledge =>
-        dark ? const Color(0xff3a3320) : const Color(0xfffdf3dc),
-      ChatSource.online =>
-        dark ? const Color(0xff26304d) : const Color(0xffe6eafb),
-      _ => dark ? const Color(0xff1d3836) : const Color(0xffe0efed),
+      ChatSource.knowledge => const Color(0xfffdf3dc),
+      ChatSource.online => const Color(0xffe6eafb),
+      _ => const Color(0xffe0efed),
     };
   }
 
-  /// 来源小标的颜色。深色模式下用亮一档的同色相，否则贴在深底上看不清。
-  Color _sourceAccent(BuildContext context, ChatSource source) {
-    final dark = Theme.of(context).brightness == Brightness.dark;
+  /// 来源小标的颜色。同样只有一套（浅色）配色。
+  Color _sourceAccent(ChatSource source) {
     return switch (source) {
-      ChatSource.knowledge =>
-        dark ? const Color(0xffe6c879) : const Color(0xff8a6d1f),
-      ChatSource.online =>
-        dark ? const Color(0xff9fb2ff) : _onlineAccent,
-      ChatSource.local => dark ? const Color(0xff7fd0c8) : _localAccent,
+      ChatSource.knowledge => const Color(0xff8a6d1f),
+      ChatSource.online => _onlineAccent,
+      ChatSource.local => _localAccent,
     };
   }
 
@@ -658,7 +859,7 @@ class _AssistantPageState extends State<AssistantPage> {
           decoration: BoxDecoration(
             color: message.isUser
                 ? colorScheme.primaryContainer
-                : _assistantBubbleColor(context, source),
+                : _assistantBubbleColor(source),
             borderRadius: BorderRadius.circular(16),
           ),
           child: Column(
@@ -688,7 +889,7 @@ class _AssistantPageState extends State<AssistantPage> {
 
   Widget _buildSourceBadge(ChatSource source) {
     final badge = _sourceBadge(source);
-    final accent = _sourceAccent(context, source);
+    final accent = _sourceAccent(source);
     return Row(
       mainAxisSize: MainAxisSize.min,
       children: [
@@ -762,6 +963,43 @@ class _AssistantPageState extends State<AssistantPage> {
     ),
   );
 
+  /// 流式回答的实时气泡：在线色，逐字滚动，底部一行小字表明还在输出。
+  Widget _buildStreamingBubble() => Align(
+    alignment: Alignment.centerLeft,
+    child: Container(
+      constraints: const BoxConstraints(maxWidth: 330),
+      margin: const EdgeInsets.only(bottom: 8),
+      padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
+      decoration: BoxDecoration(
+        color: _assistantBubbleColor(ChatSource.online),
+        borderRadius: BorderRadius.circular(16),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          Text(_streamText.isEmpty ? '…' : _streamText),
+          const SizedBox(height: 6),
+          Row(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              const SizedBox(
+                width: 10,
+                height: 10,
+                child: CircularProgressIndicator(strokeWidth: 2),
+              ),
+              const SizedBox(width: 6),
+              Text(
+                '正在输出',
+                style: Theme.of(context).textTheme.labelSmall,
+              ),
+            ],
+          ),
+        ],
+      ),
+    ),
+  );
+
   /// 快捷问题。每个都能在本地模式下拿到确定答案，不靠在线模型。
   static const _quickQuestions = [
     '今天用了几次？',
@@ -772,6 +1010,7 @@ class _AssistantPageState extends State<AssistantPage> {
     '设备时间对吗？',
     '一共有多少条记录？',
     '空白那几天怎么看？',
+    '能问什么？',
   ];
 
   Widget _buildQuickQuestions() => SingleChildScrollView(

@@ -5,10 +5,10 @@ import 'package:medication_device_app/assistant/assistant_credentials.dart';
 import 'package:medication_device_app/assistant/assistant_page.dart';
 import 'package:medication_device_app/assistant/assistant_provider.dart';
 import 'package:medication_device_app/assistant/assistant_service.dart';
+import 'package:medication_device_app/assistant/assistant_settings.dart';
 import 'package:medication_device_app/assistant/assistant_tts.dart';
 import 'package:medication_device_app/assistant/models/assistant_context.dart';
 import 'package:medication_device_app/assistant/models/chat_message.dart';
-import 'package:medication_device_app/theme/app_theme.dart';
 
 /// 内存聊天库：测试不碰平台通道，也方便断言「到底存了什么」。
 class _MemoryChatStore implements AssistantChatStore {
@@ -60,18 +60,68 @@ class _FixedAnswer implements AssistantProvider {
   }) async => answer;
 }
 
-/// 内存朗读引擎：记录读过的文本，不碰平台通道。
+/// 内存朗读引擎：记录读过的文本与停叫次数，不碰平台通道。
 class _MemorySpeaker implements AssistantSpeaker {
   final spoken = <String>[];
+  int stops = 0;
 
   @override
   Future<void> speak(String text) async => spoken.add(text);
 
   @override
-  Future<void> stop() async {}
+  Future<void> stop() async => stops++;
+
+  @override
+  Future<void> setRate(double rate) async {}
+
+  @override
+  Future<void> setPitch(double pitch) async {}
 
   @override
   Future<void> dispose() async {}
+}
+
+/// 内存偏好库：测试断言「到底存了什么」。
+class _MemorySettingsStore implements AssistantSettingsStore {
+  _MemorySettingsStore([this.settings = AssistantSettings.defaults]);
+
+  AssistantSettings settings;
+
+  @override
+  Future<AssistantSettings> load() async => settings;
+
+  @override
+  Future<void> save(AssistantSettings next) async => settings = next;
+}
+
+/// 逐块吐字的在线 provider：专门观察流式回答怎么落成一条消息，以及收到了哪些历史。
+class _StreamingProvider implements StreamingAssistantProvider {
+  _StreamingProvider(this.chunks, {this.gap = Duration.zero});
+
+  final List<String> chunks;
+  final Duration gap;
+  List<ChatTurn> lastHistory = const [];
+
+  @override
+  Future<String> reply({
+    required String question,
+    required AssistantContext context,
+    List<String> references = const [],
+  }) async => chunks.join();
+
+  @override
+  Stream<String> replyStream({
+    required String question,
+    required AssistantContext context,
+    List<String> references = const [],
+    List<ChatTurn> history = const [],
+  }) async* {
+    lastHistory = List.of(history);
+    for (final chunk in chunks) {
+      if (gap > Duration.zero) await Future<void>.delayed(gap);
+      yield chunk;
+    }
+  }
 }
 
 const _gateway = AssistantProfile(
@@ -89,7 +139,7 @@ const _context = AssistantContext(
   dailyCounts: [0, 1, 0, 0, 1, 0, 1],
 );
 
-/// 界面上的八个快捷问题，与 `_AssistantPageState._quickQuestions` 一一对应。
+/// 界面上的九个快捷问题，与 `_AssistantPageState._quickQuestions` 一一对应。
 const _quickQuestions = [
   '今天用了几次？',
   '最近有异常吗？',
@@ -99,6 +149,7 @@ const _quickQuestions = [
   '设备时间对吗？',
   '一共有多少条记录？',
   '空白那几天怎么看？',
+  '能问什么？',
 ];
 
 Future<void> _pump(
@@ -106,8 +157,8 @@ Future<void> _pump(
   AssistantService? service,
   AssistantCredentialsStore? store,
   AssistantChatStore? chats,
-  AppThemeController? theme,
   AssistantSpeaker? speaker,
+  AssistantSettingsStore? settingsStore,
   Size size = const Size(420, 800),
   double textScale = 1,
 }) async {
@@ -132,8 +183,8 @@ Future<void> _pump(
         service: service,
         store: store,
         chatStore: chats ?? _MemoryChatStore(),
-        themeController: theme,
         speaker: speaker,
+        settingsStore: settingsStore,
         assistantContext: _context,
       ),
     ),
@@ -292,32 +343,16 @@ void main() {
     expect(find.textContaining('随便问问'), findsOneWidget);
   });
 
-  testWidgets('有外观控制器时菜单给三档，切换落到控制器', (tester) async {
-    final theme = AppThemeController();
-    addTearDown(theme.dispose);
-    await _pump(tester, theme: theme);
-
-    await tester.tap(find.byTooltip('更多'));
-    await tester.pumpAndSettle();
-    expect(find.textContaining('外观：'), findsNWidgets(3));
-
-    await tester.tap(find.text('外观：深色'));
-    await tester.pumpAndSettle();
-    expect(theme.mode.value, ThemeMode.dark);
-
-    await tester.tap(find.byTooltip('更多'));
-    await tester.pumpAndSettle();
-    await tester.tap(find.text('外观：跟随系统'));
-    await tester.pumpAndSettle();
-    expect(theme.mode.value, ThemeMode.system);
-  });
-
-  testWidgets('没有外观控制器时不显示点了没反应的菜单项', (tester) async {
+  testWidgets('「更多」菜单只有对话与朗读三项，不再有外观切换', (tester) async {
     await _pump(tester);
 
     await tester.tap(find.byTooltip('更多'));
     await tester.pumpAndSettle();
     expect(find.text('清空对话'), findsOneWidget);
+    expect(find.text('带上本轮对话'), findsOneWidget);
+    expect(find.text('朗读设置'), findsOneWidget);
+    // 外观切换（跟随系统 / 浅色 / 深色）已按需求移除。前面三条正数断言先保证
+    // 菜单真的展开了，这一条才有意义（单写 findsNothing 在菜单根本没开时也会通过）。
     expect(find.textContaining('外观：'), findsNothing);
   });
 
@@ -354,5 +389,72 @@ void main() {
     await tester.pumpAndSettle();
     expect(speaker.spoken, hasLength(1));
     expect(speaker.spoken.first, contains('近 7 天共 3 次'));
+  });
+
+  testWidgets('在线流式回答逐字滚出，结束后落成带来源标的回答', (tester) async {
+    await _pump(
+      tester,
+      service: AssistantService(
+        provider: _StreamingProvider(
+          ['近 7 天共 ', '3 次使用动作。'],
+          gap: const Duration(milliseconds: 100),
+        ),
+        isRemote: true,
+      ),
+    );
+    await tester.enterText(find.byType(TextField), '最近怎么样');
+    await tester.tap(find.widgetWithIcon(IconButton, Icons.send));
+    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 120));
+    // 第一块已到、流还没结束：能看到滚动的部分文本和「正在输出」。
+    expect(find.text('正在输出'), findsOneWidget);
+    expect(find.textContaining('近 7 天共'), findsOneWidget);
+
+    await tester.pumpAndSettle();
+    expect(find.textContaining('近 7 天共 3 次使用动作。'), findsOneWidget);
+    expect(find.text('在线回答'), findsOneWidget);
+    expect(find.text('正在输出'), findsNothing);
+  });
+
+  testWidgets('开启自动朗读后新回答自动朗读，新问题会先停掉上一段', (tester) async {
+    final speaker = _MemorySpeaker();
+    await _pump(
+      tester,
+      service: AssistantService(provider: _FixedAnswer('近 7 天共 3 次。')),
+      speaker: speaker,
+      settingsStore: _MemorySettingsStore(
+        const AssistantSettings(autoSpeak: true),
+      ),
+    );
+    await _ask(tester, '最近有异常吗？');
+    expect(speaker.spoken, hasLength(1));
+    expect(speaker.spoken.first, contains('近 7 天共 3 次'));
+    // 提问开始与朗读开始各会停一次上一段，保证「只读最新一句」。
+    expect(speaker.stops, greaterThanOrEqualTo(1));
+  });
+
+  testWidgets('「带上本轮对话」开关落盘，开启后流式请求带上历史', (tester) async {
+    final settings = _MemorySettingsStore();
+    final provider = _StreamingProvider(['近 7 天共 3 次。']);
+    await _pump(
+      tester,
+      service: AssistantService(provider: provider, isRemote: true),
+      settingsStore: settings,
+    );
+
+    // 默认关：第一问不带历史。
+    await _ask(tester, '最近有异常吗？');
+    expect(provider.lastHistory, isEmpty);
+    expect(settings.settings.sendHistory, isFalse);
+
+    await tester.tap(find.byTooltip('更多'));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('带上本轮对话'));
+    await tester.pumpAndSettle();
+    expect(settings.settings.sendHistory, isTrue);
+
+    // 再问一条，应把上一轮问答带出去。
+    await _ask(tester, '那今天呢？');
+    expect(provider.lastHistory, isNotEmpty);
   });
 }

@@ -24,22 +24,17 @@ class _ConnectedAppState extends State<_ConnectedApp>
     with WidgetsBindingObserver {
   final _ble = BleService();
 
-  /// 外观设置（跟随系统 / 浅色 / 深色）由 App 顶层持有，向下传给助手页。
-  final _theme = AppThemeController();
-
   @override
   void initState() {
     super.initState();
     WidgetsBinding.instance.addObserver(this);
     unawaited(_ble.initializeAutoScan());
-    unawaited(_theme.load());
   }
 
   @override
   void dispose() {
     WidgetsBinding.instance.removeObserver(this);
     _ble.dispose();
-    _theme.dispose();
     super.dispose();
   }
 
@@ -54,78 +49,37 @@ class _ConnectedAppState extends State<_ConnectedApp>
 
   @override
   Widget build(BuildContext context) => MedicationDeviceApp(
-    themeController: _theme,
     connectionBuilder: (context, deviceRepository) =>
         BleConnectionCard(service: _ble),
   );
 }
 
-class MedicationDeviceApp extends StatefulWidget {
-  const MedicationDeviceApp({
-    super.key,
-    this.controller,
-    this.connectionBuilder,
-    this.themeController,
-  });
+class MedicationDeviceApp extends StatelessWidget {
+  const MedicationDeviceApp({super.key, this.controller, this.connectionBuilder});
   final RecordController? controller;
   final DeviceConnectionBuilder? connectionBuilder;
 
-  /// 外观设置的持有者；测试里可以不传，此时 App 自己造一份（不落盘）。
-  final AppThemeController? themeController;
-
   @override
-  State<MedicationDeviceApp> createState() => _MedicationDeviceAppState();
-}
-
-class _MedicationDeviceAppState extends State<MedicationDeviceApp> {
-  /// 只有 [MedicationDeviceApp.themeController] 为空时才会创建，且由本 State 负责销毁。
-  AppThemeController? _owned;
-
-  AppThemeController get _theme => widget.themeController ?? _owned!;
-
-  @override
-  void initState() {
-    super.initState();
-    if (widget.themeController == null) _owned = AppThemeController();
-  }
-
-  @override
-  void dispose() {
-    // 外部传进来的那份不归这里管，只管自己造的。
-    _owned?.dispose();
-    super.dispose();
-  }
-
-  @override
-  Widget build(BuildContext context) => ValueListenableBuilder<ThemeMode>(
-    valueListenable: _theme.mode,
-    builder: (context, themeMode, _) => MaterialApp(
-      title: '用药装置 · 记录',
-      debugShowCheckedModeBanner: false,
-      locale: const Locale('zh', 'CN'),
-      supportedLocales: const [Locale('zh', 'CN'), Locale('en')],
-      localizationsDelegates: GlobalMaterialLocalizations.delegates,
-      theme: buildLightTheme(),
-      darkTheme: buildDarkTheme(),
-      themeMode: themeMode,
-      home: widget.controller == null
-          ? _DatabaseLoader(
-              connectionBuilder: widget.connectionBuilder,
-              themeController: widget.themeController,
-            )
-          : HomePage(
-              controller: widget.controller!,
-              connectionBuilder: widget.connectionBuilder,
-              themeController: widget.themeController,
-            ),
-    ),
+  Widget build(BuildContext context) => MaterialApp(
+    title: '用药装置 · 记录',
+    debugShowCheckedModeBanner: false,
+    locale: const Locale('zh', 'CN'),
+    supportedLocales: const [Locale('zh', 'CN'), Locale('en')],
+    localizationsDelegates: GlobalMaterialLocalizations.delegates,
+    // 只有一套主题（浅色）：外观切换已移除，见 theme/app_theme.dart。
+    theme: buildAppTheme(),
+    home: controller == null
+        ? _DatabaseLoader(connectionBuilder: connectionBuilder)
+        : HomePage(
+            controller: controller!,
+            connectionBuilder: connectionBuilder,
+          ),
   );
 }
 
 class _DatabaseLoader extends StatefulWidget {
-  const _DatabaseLoader({this.connectionBuilder, this.themeController});
+  const _DatabaseLoader({this.connectionBuilder});
   final DeviceConnectionBuilder? connectionBuilder;
-  final AppThemeController? themeController;
   @override
   State<_DatabaseLoader> createState() => _DatabaseLoaderState();
 }
@@ -181,7 +135,6 @@ class _DatabaseLoaderState extends State<_DatabaseLoader> {
       return HomePage(
         controller: _controller!,
         connectionBuilder: widget.connectionBuilder,
-        themeController: widget.themeController,
       );
     }
     return Scaffold(
