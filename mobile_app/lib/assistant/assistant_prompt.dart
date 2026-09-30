@@ -34,5 +34,17 @@ const String assistantSystemPrompt =
     '用简短中文回答，控制在 300 字以内。';
 
 /// user 消息内容：只包含本次问题与聚合摘要，不含历史对话或原始记录。
-String assistantUserPayload(String question, AssistantContext context) =>
-    jsonEncode({'question': question, 'context': context.toJson()});
+///
+/// [references] 是设备知识库检索到的「参考资料」（见 `assistant_knowledge.dart`）：
+/// 命中时随问题一起发给模型，让设备边界、错误码这类只有本项目知道的答案有据可查；
+/// 没有命中就不带这个字段，模型只看问题 + 摘要。
+String assistantUserPayload(
+  String question,
+  AssistantContext context, {
+  List<String> references = const [],
+}) =>
+    jsonEncode({
+      'question': question,
+      'context': context.toJson(),
+      if (references.isNotEmpty) 'references': references,
+    });

@@ -77,6 +77,7 @@ class DirectLlmAssistantProvider implements AssistantProvider {
   Future<String> reply({
     required String question,
     required AssistantContext context,
+    List<String> references = const [],
   }) async {
     final trimmed = question.trim();
     if (trimmed.isEmpty || trimmed.length > maxQuestionLength) {
@@ -84,7 +85,8 @@ class DirectLlmAssistantProvider implements AssistantProvider {
     }
     final client = HttpClient()..connectionTimeout = timeout;
     try {
-      return await _request(client, trimmed, context).timeout(timeout);
+      return await _request(client, trimmed, context, references)
+          .timeout(timeout);
     } on AssistantException {
       rethrow;
     } on TimeoutException {
@@ -107,6 +109,7 @@ class DirectLlmAssistantProvider implements AssistantProvider {
     HttpClient client,
     String question,
     AssistantContext context,
+    List<String> references,
   ) async {
     final request = await client.postUrl(endpoint);
     request.followRedirects = false;
@@ -118,7 +121,11 @@ class DirectLlmAssistantProvider implements AssistantProvider {
         'temperature': 0,
         'messages': [
           {'role': 'system', 'content': assistantSystemPrompt},
-          {'role': 'user', 'content': assistantUserPayload(question, context)},
+          {
+            'role': 'user',
+            'content': assistantUserPayload(question, context,
+                references: references),
+          },
         ],
       }),
     );

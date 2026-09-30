@@ -22,6 +22,8 @@ dependencies:
   path: ^1.9.1
   path_provider: ^2.1.5
   share_plus: ^10.1.4
+  # 朗读助手回答：Android 系统 TTS，离线、语音不出手机。
+  flutter_tts: ^4.0.2
 
 dev_dependencies:
   flutter_test:

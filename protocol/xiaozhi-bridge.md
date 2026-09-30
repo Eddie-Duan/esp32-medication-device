@@ -1,5 +1,7 @@
 # Android → 助手网关：文字助手协议 v1
 
+> **已废弃（仅作历史资料）。** 自建网关（含 `xiaozhi` / `llm` / `mock` 三种上游）已随小智路线一起放弃；在线助手的现行路线是 App 直连用户自己的模型（BYOK），不再经过本网关。接口与字段记录保留供归档与对比，不再作为交付或验收依据。现行边界见 [`../docs/assistant-model-access.md`](../docs/assistant-model-access.md)。
+>
 > `/v1/assistant/chat` 是**本仓库实现的网关接口**，既不是小智官方 API，也不是任何一个上游提供的 REST API。官方云接入待确认，详见[官方云说明](../docs/xiaozhi-official-cloud.md)。
 
 网关有三种上游模式，**App 侧接口完全相同**，切换模式不需要改 App：

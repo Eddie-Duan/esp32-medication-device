@@ -1,4 +1,5 @@
 import 'answer_verification.dart';
+import 'assistant_knowledge.dart';
 import 'assistant_provider.dart';
 import 'models/assistant_context.dart';
 import 'models/chat_message.dart';
@@ -23,7 +24,22 @@ class AssistantService {
     required String question,
     required AssistantContext context,
   }) async {
-    final answer = await _provider.reply(question: question, context: context);
+    // 只有在线模式检索设备知识库：本地规则不联网、也不看这份语料。
+    final chunks = isRemote ? retrieveKnowledge(question) : const <KnowledgeChunk>[];
+    final references = [for (final chunk in chunks) chunk.toReference()];
+    // 检索到的知识里出现过的数字要放行进回验，见 answer_verification.dart。
+    final referenceNumbers = <int>{
+      for (final chunk in chunks) ...[
+        ...numbersInText(chunk.title),
+        ...numbersInText(chunk.body),
+      ],
+    };
+
+    final answer = await _provider.reply(
+      question: question,
+      context: context,
+      references: references,
+    );
     if (!isRemote) {
       // 本地回答就是由同一份摘要算出来的，不存在编造，也没有来源标记可拆。
       return ChatMessage(
@@ -48,7 +64,12 @@ class AssistantService {
     return ChatMessage(
       role: ChatRole.assistant,
       // 只有用到记录的联网回答需要回验。
-      text: verifyRemoteAnswer(parsed.body, context, now: _now),
+      text: verifyRemoteAnswer(
+        parsed.body,
+        context,
+        now: _now,
+        extra: referenceNumbers,
+      ),
       createdAt: DateTime.now(),
       source: ChatSource.online,
     );

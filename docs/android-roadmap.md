@@ -2,6 +2,8 @@
 
 当前代码在本地分支 `codex/android-xiaozhi-prep`，App 版本 `0.3.0+3`。团队只交付 Android；iOS 代码保留，自动 CI 停止。团队已把小智目标从自建服务调整为官方云；现有 Android 代码尚未连接官方云。
 
+> **2026-09-30 更新：小智路线（自建 + 官方云）已整体放弃。** 在线助手的 forward 路线锁定为 **App 直连用户自己的模型（BYOK）**——API Key 只能是用户自己的、存 `flutter_secure_storage`、绝不出手机。下面派发表里第 2/3/4 项（核对官方云激活、开发官方 Provider）不再排期；在线能力已由 `DirectLlmAssistantProvider` 直连实现，并补了设备端 RAG 检索与朗读。规则见 [`assistant-model-access.md`](assistant-model-access.md)。
+
 ## 本轮已经补齐
 
 - Android 主 manifest 的联网权限；本地 / 在线助手切换，发送问题与摘要前确认。

@@ -5,6 +5,7 @@ import 'package:medication_device_app/assistant/assistant_credentials.dart';
 import 'package:medication_device_app/assistant/assistant_page.dart';
 import 'package:medication_device_app/assistant/assistant_provider.dart';
 import 'package:medication_device_app/assistant/assistant_service.dart';
+import 'package:medication_device_app/assistant/assistant_tts.dart';
 import 'package:medication_device_app/assistant/models/assistant_context.dart';
 import 'package:medication_device_app/assistant/models/chat_message.dart';
 import 'package:medication_device_app/theme/app_theme.dart';
@@ -55,7 +56,22 @@ class _FixedAnswer implements AssistantProvider {
   Future<String> reply({
     required String question,
     required AssistantContext context,
+    List<String> references = const [],
   }) async => answer;
+}
+
+/// 内存朗读引擎：记录读过的文本，不碰平台通道。
+class _MemorySpeaker implements AssistantSpeaker {
+  final spoken = <String>[];
+
+  @override
+  Future<void> speak(String text) async => spoken.add(text);
+
+  @override
+  Future<void> stop() async {}
+
+  @override
+  Future<void> dispose() async {}
 }
 
 const _gateway = AssistantProfile(
@@ -91,6 +107,7 @@ Future<void> _pump(
   AssistantCredentialsStore? store,
   AssistantChatStore? chats,
   AppThemeController? theme,
+  AssistantSpeaker? speaker,
   Size size = const Size(420, 800),
   double textScale = 1,
 }) async {
@@ -116,6 +133,7 @@ Future<void> _pump(
         store: store,
         chatStore: chats ?? _MemoryChatStore(),
         themeController: theme,
+        speaker: speaker,
         assistantContext: _context,
       ),
     ),
@@ -320,5 +338,21 @@ void main() {
         reason: '「$question」落到了兜底，说明没有对应的规则分支',
       );
     }
+  });
+
+  testWidgets('助手回答可以朗读，读的是回答正文', (tester) async {
+    final speaker = _MemorySpeaker();
+    await _pump(
+      tester,
+      service: AssistantService(provider: _FixedAnswer('近 7 天共 3 次。')),
+      speaker: speaker,
+    );
+    await _ask(tester, '最近有异常吗？');
+
+    // 开场白和回答都是助手气泡，各带一个「朗读」；取最后一个 = 最新回答。
+    await tester.tap(find.text('朗读').last);
+    await tester.pumpAndSettle();
+    expect(speaker.spoken, hasLength(1));
+    expect(speaker.spoken.first, contains('近 7 天共 3 次'));
   });
 }

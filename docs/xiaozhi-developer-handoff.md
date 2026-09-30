@@ -1,5 +1,7 @@
 # 小智接入开发交接（Android）
 
+> **2026-09-30 更新：小智路线（官方云 + 自建智控台）已整体放弃，本文仅作历史资料。** 在线助手的现行路线是 App 直连用户自己的模型（BYOK），API Key 只能是用户自己的、绝不出手机，见 [`assistant-model-access.md`](assistant-model-access.md)。下面的分支交接、官方云核查与接入顺序不再作为待办主线。
+
 **继续开发的分支：`codex/android-xiaozhi-prep`。** `main` 尚未包含 Android 0.3.0、A+B BLE 合并与助手接口。克隆后执行 `git fetch origin`、`git switch --track origin/codex/android-xiaozhi-prep`，在此分支上新建自己的功能分支；不要从 `main` 或旧 `ble_connect` 开始。
 
 > **2026-09-29 更新：本文余下的“官方云”方向已核查为 App 不可用。**

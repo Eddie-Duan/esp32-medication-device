@@ -45,7 +45,9 @@ class MockAssistantProvider implements AssistantProvider {
   Future<String> reply({
     required String question,
     required AssistantContext context,
+    List<String> references = const [],
   }) async {
+    // 本地规则不检索知识库，references 忽略。
     await Future<void>.delayed(const Duration(milliseconds: 250));
 
     final normalizedQuestion = question.trim();

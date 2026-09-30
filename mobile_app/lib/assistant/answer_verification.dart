@@ -61,13 +61,18 @@ final RegExp _dateTimePattern =
 final RegExp _integerPattern = RegExp(r'\d+');
 
 /// 回答里出现的、摘要无法解释的数字，去重后升序返回。
+///
+/// [extra] 是额外放行的数字：RAG 检索到的设备知识（错误码、文件上限等）里的数字
+/// 是权威事实、不是模型编造，也要并进允许集合，否则模型照抄「256 个文件」会被
+/// 误判成「与统计摘要对不上」。
 List<int> numbersNotInSummary(
   String answer,
   AssistantContext context, {
   DateTime? now,
+  Set<int> extra = const {},
 }) {
-  final allowed = _allowedNumbers(context, now: now);
-  final suspicious = _numbersIn(
+  final allowed = _allowedNumbers(context, now: now, extra: extra);
+  final suspicious = numbersInText(
     answer,
   ).where((value) => !allowed.contains(value));
   return suspicious.toList()..sort();
@@ -87,10 +92,11 @@ String verifyRemoteAnswer(
   String answer,
   AssistantContext context, {
   DateTime? now,
+  Set<int> extra = const {},
 }) {
   try {
     final notice = mismatchNotice(
-      numbersNotInSummary(answer, context, now: now),
+      numbersNotInSummary(answer, context, now: now, extra: extra),
     );
     return notice == null ? answer : '$answer\n\n$notice';
   } catch (_) {
@@ -98,8 +104,13 @@ String verifyRemoteAnswer(
   }
 }
 
-/// 摘要有依据的全部数字：原始计数 + 逐日序列 + 窗口长度 + 规则观察里的派生数。
-Set<int> _allowedNumbers(AssistantContext context, {DateTime? now}) {
+/// 摘要有依据的全部数字：原始计数 + 逐日序列 + 窗口长度 + 规则观察里的派生数，
+/// 再加上 [extra]（RAG 检索到的知识里的数字）。
+Set<int> _allowedNumbers(
+  AssistantContext context, {
+  DateTime? now,
+  Set<int> extra = const {},
+}) {
   final allowed = <int>{
     context.todayCount,
     context.last7DaysCount,
@@ -112,12 +123,14 @@ Set<int> _allowedNumbers(AssistantContext context, {DateTime? now}) {
   };
   for (final observation
       in evaluateObservations(context, now: now ?? DateTime.now())) {
-    allowed.addAll(_numbersIn(observation.text));
+    allowed.addAll(numbersInText(observation.text));
   }
+  allowed.addAll(extra);
   return allowed;
 }
 
-Set<int> _numbersIn(String text) {
+/// 抽出一段文本里的全部整数（先摘掉日期时间，再看剩下的数字）。
+Set<int> numbersInText(String text) {
   final numbers = <int>{};
   // 先摘掉日期时间，再看剩下的整数。
   final cleaned = text.replaceAll(_dateTimePattern, ' ');

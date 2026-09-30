@@ -1,5 +1,9 @@
 # Android 文字助手网关
 
+> **已废弃（2026-09-30），仅作历史保留，不再推荐部署。** 在线助手的 forward 路线改为 **App 直连用户自己的模型（BYOK）**：API Key 只能是用户自己的、存 `flutter_secure_storage`、绝不出手机。本网关的 `xiaozhi` / `llm` 上游都要求服务端持有团队 Key（或透传用户 Key），与这条规则冲突，因此不再使用；`mock` 模式也只作历史联调参考。要了解现行规则，见 [`docs/assistant-model-access.md`](../../docs/assistant-model-access.md)。
+
+下面是历史说明，保留给需要复现上一阶段联调的成员。
+
 可运行的 Python 服务：Android HTTPS JSON → 上游。三种上游模式：`mock`（不调用模型）、`xiaozhi`（自建 `xiaozhi-esp32-server` 的 WebSocket）、`llm`（任意 OpenAI 兼容 API）。当前为受控原型，尚未接入团队的真实服务器。
 
 ## 1. 先运行本机 mock

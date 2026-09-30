@@ -51,7 +51,9 @@ class GatewayAssistantProvider implements AssistantProvider {
   Future<String> reply({
     required String question,
     required AssistantContext context,
+    List<String> references = const [],
   }) async {
+    // 网关已作历史保留，不再扩展检索，references 忽略。
     final trimmed = question.trim();
     if (trimmed.isEmpty || trimmed.length > maxQuestionLength) {
       throw const AssistantException('请输入 1–1000 字的问题。');

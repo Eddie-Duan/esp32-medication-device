@@ -9,6 +9,7 @@ import 'assistant_chat_store.dart';
 import 'assistant_credentials.dart';
 import 'assistant_service.dart';
 import 'assistant_exception.dart';
+import 'assistant_tts.dart';
 import 'models/assistant_context.dart';
 import 'models/chat_message.dart';
 
@@ -28,6 +29,7 @@ class AssistantPage extends StatefulWidget {
     this.store,
     this.chatStore,
     this.themeController,
+    this.speaker,
   });
 
   final AssistantService? service;
@@ -43,6 +45,9 @@ class AssistantPage extends StatefulWidget {
   /// 外观设置。为空时不显示「外观」菜单项（点了没反应比不显示更糟）。
   final AppThemeController? themeController;
 
+  /// 朗读回答用的引擎。测试注入假实现；默认用 Android 系统 TTS（离线、不出手机）。
+  final AssistantSpeaker? speaker;
+
   @override
   State<AssistantPage> createState() => _AssistantPageState();
 }
@@ -56,6 +61,10 @@ class _AssistantPageState extends State<AssistantPage> {
   late final List<ChatMessage> _messages;
   bool _sending = false;
   late AssistantContext _context;
+
+  /// 只在第一次点「朗读」时才创建系统 TTS，避免测试/未用到时碰平台通道。
+  AssistantSpeaker? _speaker;
+  bool _ownsSpeaker = false;
 
   @override
   void initState() {
@@ -72,9 +81,35 @@ class _AssistantPageState extends State<AssistantPage> {
 
   @override
   void dispose() {
+    if (_ownsSpeaker) unawaited(_speaker?.dispose());
     _inputController.dispose();
     _scrollController.dispose();
     super.dispose();
+  }
+
+  /// 拿到本次要用的朗读引擎：注入的优先，否则第一次用时新建系统 TTS。
+  AssistantSpeaker get _resolvedSpeaker {
+    final injected = widget.speaker;
+    if (injected != null) return injected;
+    final existing = _speaker;
+    if (existing != null) return existing;
+    final created = SystemTtsSpeaker();
+    _speaker = created;
+    _ownsSpeaker = true;
+    return created;
+  }
+
+  Future<void> _speak(String text) async {
+    try {
+      await _resolvedSpeaker.speak(text);
+    } catch (_) {
+      // 引擎缺失/初始化失败是设备差异，不是错误路径里要回显的东西；
+      // 只给一句固定提示，不让用户以为按了没反应。
+      if (!mounted) return;
+      ScaffoldMessenger.of(
+        context,
+      ).showSnackBar(const SnackBar(content: Text('此设备暂不支持朗读。')));
+    }
   }
 
   /// 开场白是 App 自己写的，不带来源标（它不是哪个上游的回答）。
@@ -636,6 +671,14 @@ class _AssistantPageState extends State<AssistantPage> {
                 const SizedBox(height: 4),
               ],
               Text(message.text),
+              // 助手回答可以朗读：Android 系统 TTS，离线、语音不出手机。
+              if (!message.isUser) ...[
+                const SizedBox(height: 2),
+                Align(
+                  alignment: Alignment.centerRight,
+                  child: _buildSpeakButton(message),
+                ),
+              ],
             ],
           ),
         ),
@@ -658,6 +701,20 @@ class _AssistantPageState extends State<AssistantPage> {
           ),
         ),
       ],
+    );
+  }
+
+  /// 「朗读」按钮：只在助手气泡里出现，用户自己的提问不提供朗读。
+  Widget _buildSpeakButton(ChatMessage message) {
+    return TextButton.icon(
+      onPressed: () => _speak(message.text),
+      icon: const Icon(Icons.volume_up_outlined, size: 16),
+      label: const Text('朗读'),
+      style: TextButton.styleFrom(
+        visualDensity: VisualDensity.compact,
+        padding: const EdgeInsets.symmetric(horizontal: 8),
+        tapTargetSize: MaterialTapTargetSize.shrinkWrap,
+      ),
     );
   }
 

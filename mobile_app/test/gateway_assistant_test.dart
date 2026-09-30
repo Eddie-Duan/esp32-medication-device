@@ -19,6 +19,7 @@ class _RemoteFailure implements AssistantProvider {
   Future<String> reply({
     required String question,
     required AssistantContext context,
+    List<String> references = const [],
   }) async => throw const AssistantException('在线助手响应超时，请稍后重试或切回本地摘要。');
 }
 

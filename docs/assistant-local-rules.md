@@ -87,6 +87,6 @@ AssistantPage
 
 ## 相关
 
-- 摘要字段与在线契约：[protocol/xiaozhi-bridge.md](../protocol/xiaozhi-bridge.md)
-- 在线助手与网关：[server/assistant-gateway/README.md](../server/assistant-gateway/README.md)
-- 官方云现状：[xiaozhi-official-cloud.md](xiaozhi-official-cloud.md)
+- 在线助手的现行边界（BYOK，Key 不出手机）：[assistant-model-access.md](assistant-model-access.md)
+- 摘要字段与在线契约（网关已废弃，仅作历史）：[protocol/xiaozhi-bridge.md](../protocol/xiaozhi-bridge.md)
+- 在线助手网关（已废弃，仅作历史）：[server/assistant-gateway/README.md](../server/assistant-gateway/README.md)
