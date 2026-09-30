@@ -886,7 +886,9 @@ class _AssistantPageState extends State<AssistantPage> {
   Color _barColor(int index, int count, int length, ColorScheme scheme) {
     if (index == length - 1) return scheme.primary;
     if (count == 0) return scheme.outlineVariant;
-    return scheme.primary.withOpacity(0.5);
+    // 用 withValues 而不是 withOpacity：后者已废弃（有精度损失），
+    // 而本仓库把 analyze 的 info 也当致命错误，留着会让整个 job 挂掉。
+    return scheme.primary.withValues(alpha: 0.5);
   }
 
   void _showDayCount(int index, int count, {required bool isToday}) {
