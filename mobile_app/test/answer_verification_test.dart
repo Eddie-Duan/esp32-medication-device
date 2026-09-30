@@ -3,6 +3,7 @@ import 'package:medication_device_app/assistant/answer_verification.dart';
 import 'package:medication_device_app/assistant/assistant_provider.dart';
 import 'package:medication_device_app/assistant/assistant_service.dart';
 import 'package:medication_device_app/assistant/models/assistant_context.dart';
+import 'package:medication_device_app/assistant/models/chat_message.dart';
 
 class _FixedProvider implements AssistantProvider {
   _FixedProvider(this.answer);
@@ -120,5 +121,61 @@ void main() {
       now: now,
     ).ask(question: '最近怎么样？', context: context);
     expect(local.text, bogus);
+  });
+
+  test('结尾的来源标记会被拆掉，并按标记归类', () {
+    final knowledge = parseRemoteAnswer('哮喘是一种慢性气道炎症。\n【来源】AI知识');
+    expect(knowledge.isKnowledge, isTrue);
+    expect(knowledge.body, '哮喘是一种慢性气道炎症。');
+
+    final records = parseRemoteAnswer('近 7 天共 8 次。\n【来源】记录统计');
+    expect(records.isKnowledge, isFalse);
+    expect(records.body, '近 7 天共 8 次。');
+    // 标记行本身不该出现在用户看到的气泡里：界面用来源小标表达同一件事。
+    expect(records.body, isNot(contains('来源')));
+  });
+
+  test('没有标记、或标记不在结尾时原样返回', () {
+    final plain = parseRemoteAnswer('近 7 天共 8 次。');
+    expect(plain.body, '近 7 天共 8 次。');
+    expect(plain.isKnowledge, isFalse);
+
+    // 标记写在正文中间：宁可当没写，也不能把正文从中间截断。
+    const middle = '【来源】AI知识\n哮喘的常见诱因包括尘螨与花粉。';
+    expect(parseRemoteAnswer(middle).body, middle);
+  });
+
+  test('通用知识回答补上说明，且不参与数字回验', () async {
+    // 「3 亿」「300」本来就不来自摘要，回验会把这种正常回答误判成编造，
+    // 再补一句「与当前统计摘要对不上」——用户问的是哮喘，得到的是统计提醒。
+    final message = await AssistantService(
+      provider: _FixedProvider('全球约有 3 亿人患哮喘。\n【来源】AI知识'),
+      isRemote: true,
+      now: now,
+    ).ask(question: '介绍一下哮喘', context: context);
+    expect(message.source, ChatSource.knowledge);
+    expect(message.text, contains('3 亿'));
+    expect(message.text, contains('不是你的设备记录'));
+    expect(message.text, isNot(contains('与当前统计摘要对不上')));
+    expect(message.text, isNot(contains('【来源】')));
+  });
+
+  test('用到记录的回答标为在线来源，并保留数字回验', () async {
+    final message = await AssistantService(
+      provider: _FixedProvider('本周记录了 12 次。\n【来源】记录统计'),
+      isRemote: true,
+      now: now,
+    ).ask(question: '最近怎么样？', context: context);
+    expect(message.source, ChatSource.online);
+    expect(message.text, contains('与当前统计摘要对不上'));
+    expect(message.text, isNot(contains('【来源】')));
+  });
+
+  test('本地回答的来源是本地', () async {
+    final message = await AssistantService(provider: _FixedProvider('任意')).ask(
+      question: '随便问问',
+      context: context,
+    );
+    expect(message.source, ChatSource.local);
   });
 }

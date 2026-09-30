@@ -1,6 +1,46 @@
 import 'models/assistant_context.dart';
 import 'rules/observation_rules.dart';
 
+/// 在线回答结尾的来源标记，形如 `【来源】AI知识` / `【来源】记录统计`。
+///
+/// 只认**结尾**那一行：模型不一定听话，可能忘了写，也可能把标记写在正文中间，
+/// 那种情况宁可当没写，也不能把正文从中间截断。
+final RegExp _sourceMarker = RegExp(
+  r'\n?[ \t　]*【来源】[ \t　]*[:：]?[ \t　]*(AI\s*知识|记录统计)[。.]?[ \t　]*$',
+);
+
+/// 通用知识回答末尾必须补的说明。
+///
+/// 这句话由 App 自己写，不采用模型那句：模型可能只写「我不是医生」这类模糊说法，
+/// 也可能干脆不写。用户需要知道的是具体这一件事——**这条信息不是来自你的设备记录**。
+const remoteKnowledgeNote =
+    '（以上是 AI 的通用健康知识，不是你的设备记录；涉及健康决策请以医生意见为准。）';
+
+/// 拆掉来源标记之后的回答。
+class ParsedRemoteAnswer {
+  const ParsedRemoteAnswer(this.body, {this.isKnowledge = false});
+
+  /// 去掉标记的正文。
+  final String body;
+
+  /// 这条回答只用通用知识、没用到记录。
+  final bool isKnowledge;
+}
+
+/// 按结尾的来源标记拆解在线回答。
+///
+/// 没有标记时原样返回（[ParsedRemoteAnswer.isKnowledge] 为 false），
+/// 界面按「在线」展示——缺标记只是少一层归类，不该让用户拿不到回答。
+ParsedRemoteAnswer parseRemoteAnswer(String answer) {
+  final match = _sourceMarker.firstMatch(answer);
+  if (match == null) return ParsedRemoteAnswer(answer);
+  final marker = (match.group(1) ?? '').replaceAll(' ', '');
+  return ParsedRemoteAnswer(
+    answer.substring(0, match.start).trimRight(),
+    isKnowledge: marker == 'AI知识',
+  );
+}
+
 /// 在线回答的数字回验。
 ///
 /// 在线模型最危险也最容易被忽略的失败不是答得难听，而是**编造一个不存在的次数**

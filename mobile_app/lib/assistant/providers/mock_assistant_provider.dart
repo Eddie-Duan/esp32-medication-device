@@ -12,6 +12,35 @@ class MockAssistantProvider implements AssistantProvider {
   /// 注入固定时间便于测试；为空时每次提问读取当前本地时间。
   final DateTime? now;
 
+  /// 直接问「该不该吃药」的问法。
+  ///
+  /// 这些必须在**所有数据分支之前**拦下：问「我今天漏服了吗」如果先命中「今天」
+  /// 分支去报次数，就等于用设备动作回答了服药问题——次数不证明服药，
+  /// 那样回答会让用户把“有记录”读成“吃过了”。
+  static const _medicalKeywords = {
+    '漏服',
+    '漏吃',
+    '忘吃',
+    '忘记吃',
+    '该不该',
+    '要不要吃',
+    '补服',
+    '补吃',
+    '加量',
+    '减量',
+    '停药',
+    '换药',
+    '副作用',
+    '诊断',
+  };
+
+  static const _medicalBoundaryAnswer =
+      '这个问题不该由设备记录来回答。\n'
+      '设备记录只能说明装置被使用过，不能确认是否服药，所以「有没有漏服」'
+      '这类判断需要你或医生按实际情况来确认。\n'
+      '我也不做诊断、不推荐剂量、不调整用药方案，这些请以医生或药师的意见为准。\n'
+      '如果你问的是记录本身，可以直接问：今天用了几次、数据是不是最新的、空白那几天怎么看。';
+
   @override
   Future<String> reply({
     required String question,
@@ -25,9 +54,15 @@ class MockAssistantProvider implements AssistantProvider {
     }
 
     final sourceText = context.isDemo ? '演示数据' : '设备记录';
-    final observations =
-        evaluateObservations(context, now: now ?? DateTime.now());
+    final observations = evaluateObservations(
+      context,
+      now: now ?? DateTime.now(),
+    );
     final attention = _attentionNotes(observations);
+
+    if (_matchesAny(normalizedQuestion, _medicalKeywords)) {
+      return _medicalBoundaryAnswer;
+    }
 
     if (normalizedQuestion.contains('今天') ||
         normalizedQuestion.contains('次数')) {
@@ -54,6 +89,44 @@ class MockAssistantProvider implements AssistantProvider {
           '时间未知或晚于当前时间的记录不计入按日统计。$attention';
     }
 
+    if (_matchesAny(normalizedQuestion, const {'最新', '同步', '多久'})) {
+      // `never_synced` 只在设备数据下产生；演示数据没有设备，自己说清楚就好。
+      final base =
+          _firstNote(observations, 'never_synced') ??
+          (context.lastSyncAt == null
+              ? '演示数据没有设备同步时间。'
+              : '最后一次同步是 ${context.lastSyncAt!.toLocal()}，'
+                    '之后的新记录可能还没同步到手机。');
+      return '$base${_notesFor(observations, const {'stale_sync', 'future_sync'})}'
+          '同步时间只反映本机数据的新旧，不影响记录本身。';
+    }
+
+    if (_matchesAny(normalizedQuestion, const {'时间', '校时', '日期'})) {
+      // 演示数据没有设备可维护，所以不给校时建议（同规则层的取舍）。
+      final advice = context.isDemo ? '' : '如果设备时间不对，可以在设备上校时后重新同步。';
+      return '$sourceText里有 ${context.unknownTimeCount} 条时间未知、'
+          '${context.futureTimeCount} 条时间晚于当前时间的记录，这些不计入按日统计。'
+          '${_notesFor(observations, const {'unknown_time', 'future_time'})}'
+          '$advice';
+    }
+
+    if (_matchesAny(normalizedQuestion, const {'总共', '一共', '多少条', '总量', '全部'})) {
+      return '$sourceText共 ${context.totalCount} 条：今天 ${context.todayCount} 次，'
+          '近 7 天 ${context.last7DaysCount} 次。'
+          '其中 ${context.unknownTimeCount} 条时间未知、'
+          '${context.futureTimeCount} 条时间晚于当前时间，这些不计入按日统计。$attention';
+    }
+
+    if (_matchesAny(normalizedQuestion, const {'空白', '空着', '没记录', '漏记'})) {
+      final blanks = _notesFor(
+        observations,
+        const {'blank_days', 'uneven_days', 'recent_gap'},
+      );
+      return '$sourceText近 7 天逐日为 ${context.dailyCounts.join('、')}。'
+          '${blanks.isEmpty ? '这 7 天都有记录。' : blanks}'
+          '没有记录只说明当天没有设备动作，不能确认是否服药。';
+    }
+
     if (normalizedQuestion.contains('建议') ||
         normalizedQuestion.contains('注意') ||
         normalizedQuestion.contains('怎么办')) {
@@ -62,8 +135,36 @@ class MockAssistantProvider implements AssistantProvider {
           '设备动作次数只代表装置被使用，不能确认实际服药。';
     }
 
-    return '当前记录摘要：${context.toPromptSummary()} '
-        '本地助手按固定规则解释统计；可在右上角切换团队提供的在线助手。';
+    // 兜底不再只丢一句摘要：先说清本地模式能答什么、答不了什么，
+    // 免得用户问什么都只看到一串统计数字，以为助手在复读。
+    return '本地模式只按固定规则解释你的记录，不联网、也没有通用知识。\n'
+        '我能直接回答这些：今天用了几次、数据是不是最新的、设备时间、总条数、'
+        '异常记录、逐日空档、需要留意的事。\n'
+        '想问健康常识（例如某种疾病的科普），切到上面的「在线」就能问。\n'
+        '当前记录摘要：${context.toPromptSummary()}';
+  }
+
+  bool _matchesAny(String question, Set<String> keywords) =>
+      keywords.any(question.contains);
+
+  /// 取指定代码的第一条观察文本，没有就返回 null。
+  String? _firstNote(List<AssistantObservation> observations, String code) {
+    for (final item in observations) {
+      if (item.code == code) return item.text;
+    }
+    return null;
+  }
+
+  /// 把指定代码的观察文本串成一段（每条之后换行），没有就返回空串。
+  ///
+  /// 复用规则层的原话，而不是在这里另写一套：概览页的「需要留意」卡片和助手
+  /// 说的必须是同一句，否则两处措辞会慢慢漂开。
+  String _notesFor(List<AssistantObservation> observations, Set<String> codes) {
+    final notes = observations
+        .where((item) => codes.contains(item.code))
+        .map((item) => item.text)
+        .toList();
+    return notes.isEmpty ? '' : '${notes.join(' ')}\n';
   }
 
   /// 只把需要用户采取动作的观察追加到具体回答之后。

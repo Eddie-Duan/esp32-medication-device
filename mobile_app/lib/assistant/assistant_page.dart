@@ -1,13 +1,23 @@
+import 'dart:async';
 import 'dart:math' as math;
 
 import 'package:flutter/material.dart';
 
+import '../theme/app_theme.dart';
 import 'assistant_api_console.dart';
+import 'assistant_chat_store.dart';
 import 'assistant_credentials.dart';
 import 'assistant_service.dart';
 import 'assistant_exception.dart';
 import 'models/assistant_context.dart';
 import 'models/chat_message.dart';
+
+/// 本地与在线两种上游的识别色。全页的强调色只有这两枚，换配色只改这里。
+///
+/// 在线用靛蓝而不是另一档青绿：这两个颜色在一屏里会同时出现（分段控件、
+/// 来源小标、发送按钮），色相差距太小就等于没区分。
+const _localAccent = Color(0xff147d79);
+const _onlineAccent = Color(0xff4f6bd9);
 
 class AssistantPage extends StatefulWidget {
   const AssistantPage({
@@ -16,6 +26,8 @@ class AssistantPage extends StatefulWidget {
     this.assistantContext = const AssistantContext(),
     this.contextLoader,
     this.store,
+    this.chatStore,
+    this.themeController,
   });
 
   final AssistantService? service;
@@ -25,6 +37,12 @@ class AssistantPage extends StatefulWidget {
   /// 已保存的在线 API。测试注入用；默认走系统安全存储。
   final AssistantCredentialsStore? store;
 
+  /// 聊天记录存储。测试注入内存实现；默认写本机偏好存储。
+  final AssistantChatStore? chatStore;
+
+  /// 外观设置。为空时不显示「外观」菜单项（点了没反应比不显示更糟）。
+  final AppThemeController? themeController;
+
   @override
   State<AssistantPage> createState() => _AssistantPageState();
 }
@@ -32,6 +50,7 @@ class AssistantPage extends StatefulWidget {
 class _AssistantPageState extends State<AssistantPage> {
   late AssistantService _service;
   late final AssistantCredentialsStore _store;
+  late final AssistantChatStore _chatStore;
   late final TextEditingController _inputController;
   late final ScrollController _scrollController;
   late final List<ChatMessage> _messages;
@@ -43,17 +62,12 @@ class _AssistantPageState extends State<AssistantPage> {
     super.initState();
     _service = widget.service ?? AssistantService();
     _store = widget.store ?? SecureAssistantCredentialsStore();
+    _chatStore = widget.chatStore ?? SharedPreferencesAssistantChatStore();
     _context = widget.assistantContext;
     _inputController = TextEditingController();
     _scrollController = ScrollController();
-    _messages = [
-      ChatMessage(
-        role: ChatRole.assistant,
-        text:
-            '你好，我可以解释${_context.isDemo ? '演示数据' : '本地设备记录'}的统计。${_service.isRemote ? '当前使用在线助手。' : '当前使用本地规则回答，不联网。'}记录的动作次数不代表确认服药。',
-        createdAt: DateTime.now(),
-      ),
-    ];
+    _messages = [_welcomeMessage()];
+    unawaited(_loadHistory());
   }
 
   @override
@@ -62,6 +76,34 @@ class _AssistantPageState extends State<AssistantPage> {
     _scrollController.dispose();
     super.dispose();
   }
+
+  /// 开场白是 App 自己写的，不带来源标（它不是哪个上游的回答）。
+  ChatMessage _welcomeMessage() => ChatMessage(
+    role: ChatRole.assistant,
+    text:
+        '你好，我可以解释${_context.isDemo ? '演示数据' : '本地设备记录'}的统计。'
+        '${_service.isRemote ? '当前使用在线助手。' : '当前使用本地规则回答，不联网。'}'
+        '记录的动作次数不代表确认服药。',
+    createdAt: DateTime.now(),
+  );
+
+  /// 读本机历史。读不到、或本来就空，就保留开场白。
+  Future<void> _loadHistory() async {
+    final history = await _chatStore.load();
+    if (!mounted || history.isEmpty) return;
+    // 读盘期间用户可能已经提问了，那种情况下不能把刚发的消息覆盖掉。
+    if (_messages.length > 1) return;
+    setState(() => _messages
+      ..clear()
+      ..addAll(history));
+    _scrollToBottom();
+  }
+
+  /// 每次消息变动后落盘。
+  ///
+  /// 故意不 await：写失败也只是这次没存上（见 [AssistantChatStore] 的失败语义），
+  /// 不该让发送流程等磁盘。
+  void _persistHistory() => unawaited(_chatStore.save(List.of(_messages)));
 
   Future<void> _send([String? preset]) async {
     final question = (preset ?? _inputController.text).trim();
@@ -78,7 +120,12 @@ class _AssistantPageState extends State<AssistantPage> {
       );
       _sending = true;
     });
+    _persistHistory();
     _scrollToBottom();
+
+    // 回答是提问那一刻的上游给出的：等待期间用户可能切了模式，
+    // 失败气泡的来源要按切换前算，否则会标错。
+    final wasRemote = _service.isRemote;
 
     try {
       final latestContext =
@@ -91,6 +138,7 @@ class _AssistantPageState extends State<AssistantPage> {
       );
       if (!mounted) return;
       setState(() => _messages.add(answer));
+      _persistHistory();
     } catch (error) {
       if (!mounted) return;
       setState(() {
@@ -101,9 +149,11 @@ class _AssistantPageState extends State<AssistantPage> {
                 ? error.message
                 : '暂时无法读取记录或获取回答，请稍后重试。',
             createdAt: DateTime.now(),
+            source: wasRemote ? ChatSource.online : ChatSource.local,
           ),
         );
       });
+      _persistHistory();
     } finally {
       if (mounted) {
         setState(() => _sending = false);
@@ -116,10 +166,8 @@ class _AssistantPageState extends State<AssistantPage> {
   Future<void> _changeMode(bool remote) async {
     if (_sending || remote == _service.isRemote) return;
     if (!remote) {
-      setState(() {
-        _service = AssistantService();
-        _resetConversation('已切回本地摘要，不联网。');
-      });
+      setState(() => _service = AssistantService());
+      _appendNotice('已切回本地摘要，不联网。');
       return;
     }
     // 已经配置过就直接用选中的那条，不再弹窗——用户要的是「点一下就切」。
@@ -129,10 +177,8 @@ class _AssistantPageState extends State<AssistantPage> {
       await _openConsole();
       return;
     }
-    setState(() {
-      _service = AssistantService(provider: provider, isRemote: true);
-      _resetConversation(_onlineNotice);
-    });
+    setState(() => _service = AssistantService(provider: provider, isRemote: true));
+    _appendNotice(_onlineNotice);
   }
 
   static const _onlineNotice =
@@ -145,23 +191,109 @@ class _AssistantPageState extends State<AssistantPage> {
       builder: (_) => AssistantApiConsole(store: _store),
     );
     if (service == null || !mounted) return;
-    setState(() {
-      _service = service;
-      _resetConversation(_onlineNotice);
-    });
+    setState(() => _service = service);
+    _appendNotice(_onlineNotice);
   }
 
-  /// 换了上游之后，旧回答的来源已经对不上当前模式，所以清空并要求重新提问。
-  void _resetConversation(String notice) {
-    _messages
-      ..clear()
-      ..add(
+  /// 切换上游时插入一条分隔提示，**不再清空对话**。
+  ///
+  /// 清空看起来只是「干净」，实际是把用户的东西删了：刚在本地问到的答案、
+  /// 在线追问的上下文，切一下模式就全没了。历史里每条回答都带来源标，
+  /// 本地答和在线答混着看也不会认错，所以没有清空的必要。
+  void _appendNotice(String notice) {
+    setState(
+      () => _messages.add(
         ChatMessage(
-          role: ChatRole.assistant,
+          role: ChatRole.system,
           text: notice,
           createdAt: DateTime.now(),
         ),
+      ),
+    );
+    _persistHistory();
+    _scrollToBottom();
+  }
+
+  /// 清空本机聊天记录。
+  ///
+  /// 聊天已经落盘，就必须给删除入口：内容里有记录摘要和在线回答，
+  /// 用户要能一键抹掉，而不是只能去系统设置里清应用数据。
+  Future<void> _clearConversation() async {
+    final confirmed = await showDialog<bool>(
+      context: context,
+      builder: (context) => AlertDialog(
+        title: const Text('清空对话？'),
+        content: const Text('会删除本机保存的聊天记录。用药记录本身不受影响。'),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(context, false),
+            child: const Text('取消'),
+          ),
+          FilledButton(
+            onPressed: () => Navigator.pop(context, true),
+            child: const Text('清空'),
+          ),
+        ],
+      ),
+    );
+    if (confirmed != true || !mounted) return;
+    await _chatStore.clear();
+    if (!mounted) return;
+    setState(() => _messages
+      ..clear()
+      ..add(_welcomeMessage()));
+    _persistHistory();
+  }
+
+  List<PopupMenuEntry<String>> _menuItems(ThemeMode? mode) => [
+    const PopupMenuItem(value: 'clear', child: Text('清空对话')),
+    if (mode != null) ...[
+      const PopupMenuDivider(),
+      CheckedPopupMenuItem(
+        value: 'system',
+        checked: mode == ThemeMode.system,
+        child: const Text('外观：跟随系统'),
+      ),
+      CheckedPopupMenuItem(
+        value: 'light',
+        checked: mode == ThemeMode.light,
+        child: const Text('外观：浅色'),
+      ),
+      CheckedPopupMenuItem(
+        value: 'dark',
+        checked: mode == ThemeMode.dark,
+        child: const Text('外观：深色'),
+      ),
+    ],
+  ];
+
+  Widget _buildOverflowMenu() {
+    final theme = widget.themeController;
+    if (theme == null) {
+      return PopupMenuButton<String>(
+        tooltip: '更多',
+        onSelected: _onMenuSelected,
+        itemBuilder: (_) => _menuItems(null),
       );
+    }
+    // 勾选状态要跟着当前模式走，所以菜单本身也要监听。
+    return ValueListenableBuilder<ThemeMode>(
+      valueListenable: theme.mode,
+      builder: (context, mode, _) => PopupMenuButton<String>(
+        tooltip: '更多',
+        onSelected: _onMenuSelected,
+        itemBuilder: (_) => _menuItems(mode),
+      ),
+    );
+  }
+
+  Future<void> _onMenuSelected(String value) async {
+    if (value == 'clear') {
+      await _clearConversation();
+      return;
+    }
+    final theme = widget.themeController;
+    if (theme != null) await theme.setMode(parseThemeMode(value));
   }
 
   void _scrollToBottom() {
@@ -177,34 +309,42 @@ class _AssistantPageState extends State<AssistantPage> {
 
   @override
   Widget build(BuildContext context) {
+    final accent = _service.isRemote ? _onlineAccent : _localAccent;
     return Scaffold(
       appBar: AppBar(
         title: const Text('用药记录助手'),
         actions: [
           IconButton(
             onPressed: _sending ? null : _openConsole,
-            icon: const Icon(Icons.settings_outlined),
+            icon: Icon(Icons.settings_outlined, color: accent),
             tooltip: '管理 API',
           ),
+          _buildOverflowMenu(),
         ],
       ),
-      body: Column(
-        children: [
-          _buildSummaryCard(),
-          _buildModeBar(),
-          Expanded(
-            child: ListView.builder(
-              controller: _scrollController,
-              padding: const EdgeInsets.fromLTRB(16, 4, 16, 16),
-              itemCount: _messages.length + (_sending ? 1 : 0),
-              itemBuilder: (context, index) => index == _messages.length
-                  ? _buildThinkingBubble()
-                  : _buildMessage(_messages[index]),
+      // 键盘弹起时可用高度会变小。真正占高的摘要卡放进可滚动区随内容滚走，
+      // 输入栏固定在底部——这样就不会再出现「输入框被挤出屏幕、看不到打的字」的
+      // RenderFlex 溢出（原来摘要卡是固定项，键盘一来就把输入栏顶出屏幕）。
+      body: SafeArea(
+        child: Column(
+          children: [
+            _buildModeBar(),
+            Expanded(
+              child: ListView(
+                controller: _scrollController,
+                padding: const EdgeInsets.fromLTRB(16, 4, 16, 12),
+                children: [
+                  _buildSummaryCard(),
+                  for (final message in _messages) _buildMessage(message),
+                  if (_sending) _buildThinkingBubble(),
+                ],
+              ),
             ),
-          ),
-          _buildQuickQuestions(),
-          _buildInputBar(),
-        ],
+            // 快捷问题留在固定区：它是「随时点一下」的入口，滚走了就不好用。
+            _buildQuickQuestions(),
+            _buildInputBar(),
+          ],
+        ),
       ),
     );
   }
@@ -214,6 +354,8 @@ class _AssistantPageState extends State<AssistantPage> {
   /// 之前切换藏在右上角菜单里，用户找不到、也看不出当前在用什么；现在直接显示
   /// 本地/在线两段，选中态就是当前上游。
   Widget _buildModeBar() {
+    final remote = _service.isRemote;
+    final accent = remote ? _onlineAccent : _localAccent;
     return Padding(
       padding: const EdgeInsets.fromLTRB(16, 0, 16, 8),
       child: Column(
@@ -233,13 +375,27 @@ class _AssistantPageState extends State<AssistantPage> {
                   icon: Icon(Icons.cloud_outlined, size: 16),
                 ),
               ],
-              selected: {_service.isRemote},
+              selected: {remote},
+              // 选中段直接上识别色，一眼看出现在问的是谁。选中态是
+              // WidgetState.selected，只能靠 resolveWith 表达（不能整段染色，
+              // 否则未选中的那段也跟着变色，就看不出选的是哪个了）。
+              style: ButtonStyle(
+                backgroundColor: WidgetStateProperty.resolveWith(
+                  (states) =>
+                      states.contains(WidgetState.selected) ? accent : null,
+                ),
+                foregroundColor: WidgetStateProperty.resolveWith(
+                  (states) => states.contains(WidgetState.selected)
+                      ? Colors.white
+                      : null,
+                ),
+              ),
               onSelectionChanged: _sending
                   ? null
                   : (selection) => _changeMode(selection.single),
             ),
           ),
-          if (_service.isRemote) ...[
+          if (remote) ...[
             const SizedBox(height: 8),
             _buildPrivacyBanner(),
           ],
@@ -250,12 +406,11 @@ class _AssistantPageState extends State<AssistantPage> {
 
   /// 在线时把「按下发送会发生什么」放在输入框上方，而不是只写在设置页里。
   Widget _buildPrivacyBanner() {
-    final scheme = Theme.of(context).colorScheme;
     return Container(
       width: double.infinity,
       padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
       decoration: BoxDecoration(
-        color: scheme.surfaceContainerHighest,
+        color: _assistantBubbleColor(context, ChatSource.online),
         borderRadius: BorderRadius.circular(10),
       ),
       child: Row(
@@ -264,7 +419,7 @@ class _AssistantPageState extends State<AssistantPage> {
           Icon(
             Icons.privacy_tip_outlined,
             size: 16,
-            color: scheme.onSurfaceVariant,
+            color: _sourceAccent(context, ChatSource.online),
           ),
           const SizedBox(width: 8),
           Expanded(
@@ -282,7 +437,8 @@ class _AssistantPageState extends State<AssistantPage> {
   Widget _buildSummaryCard() {
     final data = _context;
     return Card(
-      margin: const EdgeInsets.fromLTRB(16, 12, 16, 8),
+      // 横向留白由外层 ListView 给，卡片自己只管上下间距。
+      margin: const EdgeInsets.only(bottom: 8),
       child: Padding(
         padding: const EdgeInsets.all(12),
         child: Column(
@@ -315,6 +471,11 @@ class _AssistantPageState extends State<AssistantPage> {
       1,
       (current, count) => math.max(current, count),
     );
+    // 柱子上的数字会随系统字号放大，柱区高度也跟着放大，否则大字体会把它撑爆
+    // （同一类溢出：固定高度装不下会被 textScaler 放大的文字）。
+    final scale = MediaQuery.textScalerOf(context).scale(1);
+    const barAreaHeight = 52.0;
+    const maxBarHeight = 28.0;
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
@@ -324,7 +485,7 @@ class _AssistantPageState extends State<AssistantPage> {
         ),
         const SizedBox(height: 8),
         SizedBox(
-          height: 52,
+          height: barAreaHeight * scale,
           child: Row(
             crossAxisAlignment: CrossAxisAlignment.end,
             children: [
@@ -346,7 +507,7 @@ class _AssistantPageState extends State<AssistantPage> {
                           width: 14,
                           height: math.max(
                             3,
-                            data.dailyCounts[index] / max * 28,
+                            data.dailyCounts[index] / max * maxBarHeight * scale,
                           ),
                           decoration: BoxDecoration(
                             color: Theme.of(context).colorScheme.primary,
@@ -380,8 +541,54 @@ class _AssistantPageState extends State<AssistantPage> {
     );
   }
 
+  /// 助手气泡的底色。
+  ///
+  /// 深色模式不能沿用浅色模式的淡底：淡底配深色模式下的浅色文字会读不出来，
+  /// 所以两套都写出来，只按当前亮度取值。
+  Color _assistantBubbleColor(BuildContext context, ChatSource? source) {
+    final dark = Theme.of(context).brightness == Brightness.dark;
+    return switch (source) {
+      ChatSource.knowledge =>
+        dark ? const Color(0xff3a3320) : const Color(0xfffdf3dc),
+      ChatSource.online =>
+        dark ? const Color(0xff26304d) : const Color(0xffe6eafb),
+      _ => dark ? const Color(0xff1d3836) : const Color(0xffe0efed),
+    };
+  }
+
+  /// 来源小标的颜色。深色模式下用亮一档的同色相，否则贴在深底上看不清。
+  Color _sourceAccent(BuildContext context, ChatSource source) {
+    final dark = Theme.of(context).brightness == Brightness.dark;
+    return switch (source) {
+      ChatSource.knowledge =>
+        dark ? const Color(0xffe6c879) : const Color(0xff8a6d1f),
+      ChatSource.online =>
+        dark ? const Color(0xff9fb2ff) : _onlineAccent,
+      ChatSource.local => dark ? const Color(0xff7fd0c8) : _localAccent,
+    };
+  }
+
+  /// 来源小标的图标与文字。
+  ///
+  /// 措辞用「本地回答 / 在线回答 / AI 知识」，与分段控件的「本地 / 在线」不同字，
+  /// 这样界面上的两处标签不会互相混淆（测试里也靠这一点区分）。
+  ({String label, IconData icon}) _sourceBadge(ChatSource source) =>
+      switch (source) {
+        ChatSource.local => (
+          label: '本地回答',
+          icon: Icons.offline_bolt_outlined,
+        ),
+        ChatSource.online => (label: '在线回答', icon: Icons.cloud_outlined),
+        ChatSource.knowledge => (
+          label: 'AI 知识',
+          icon: Icons.lightbulb_outline,
+        ),
+      };
+
   Widget _buildMessage(ChatMessage message) {
+    if (message.isNotice) return _buildNotice(message);
     final colorScheme = Theme.of(context).colorScheme;
+    final source = message.source;
     return Align(
       alignment: message.isUser ? Alignment.centerRight : Alignment.centerLeft,
       child: Semantics(
@@ -395,55 +602,107 @@ class _AssistantPageState extends State<AssistantPage> {
           decoration: BoxDecoration(
             color: message.isUser
                 ? colorScheme.primaryContainer
-                : colorScheme.surfaceContainerHighest,
+                : _assistantBubbleColor(context, source),
             borderRadius: BorderRadius.circular(16),
           ),
-          child: Text(message.text),
-        ),
-      ),
-    );
-  }
-
-  /// 在线助手最长可能等 55 秒；只靠发送按钮上的小转圈，对话区看起来像卡死了。
-  Widget _buildThinkingBubble() => Align(
-        alignment: Alignment.centerLeft,
-        child: Container(
-          margin: const EdgeInsets.only(bottom: 8),
-          padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
-          decoration: BoxDecoration(
-            color: Theme.of(context).colorScheme.surfaceContainerHighest,
-            borderRadius: BorderRadius.circular(16),
-          ),
-          child: Row(
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
             mainAxisSize: MainAxisSize.min,
             children: [
-              const SizedBox(
-                width: 14,
-                height: 14,
-                child: CircularProgressIndicator(strokeWidth: 2),
-              ),
-              const SizedBox(width: 10),
-              Text(_service.isRemote ? '正在询问在线助手…' : '正在读取本地统计…'),
+              // 用户提问不带来源标：问句本身没有来源差异。
+              if (!message.isUser && source != null) ...[
+                _buildSourceBadge(source),
+                const SizedBox(height: 4),
+              ],
+              Text(message.text),
             ],
           ),
         ),
-      );
-
-  Widget _buildQuickQuestions() {
-    return SizedBox(
-      height: 42,
-      child: ListView(
-        padding: const EdgeInsets.symmetric(horizontal: 12),
-        scrollDirection: Axis.horizontal,
-        children: [
-          _quickQuestion('今天用了几次？'),
-          _quickQuestion('最近有异常吗？'),
-          _quickQuestion('查看最近一周'),
-          _quickQuestion('有什么建议？'),
-        ],
       ),
     );
   }
+
+  Widget _buildSourceBadge(ChatSource source) {
+    final badge = _sourceBadge(source);
+    final accent = _sourceAccent(context, source);
+    return Row(
+      mainAxisSize: MainAxisSize.min,
+      children: [
+        Icon(badge.icon, size: 12, color: accent),
+        const SizedBox(width: 4),
+        Text(
+          badge.label,
+          style: Theme.of(context).textTheme.labelSmall?.copyWith(
+            color: accent,
+          ),
+        ),
+      ],
+    );
+  }
+
+  /// 切换上游的分隔提示：居中的淡色小字，不是气泡——它不是谁说的话。
+  Widget _buildNotice(ChatMessage message) => Padding(
+    padding: const EdgeInsets.symmetric(vertical: 8),
+    child: Center(
+      child: Container(
+        padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
+        decoration: BoxDecoration(
+          color: Theme.of(context).colorScheme.surfaceContainerHighest,
+          borderRadius: BorderRadius.circular(999),
+        ),
+        child: Text(
+          message.text,
+          style: Theme.of(context).textTheme.bodySmall,
+          textAlign: TextAlign.center,
+        ),
+      ),
+    ),
+  );
+
+  /// 在线助手最长可能等 55 秒；只靠发送按钮上的小转圈，对话区看起来像卡死了。
+  Widget _buildThinkingBubble() => Align(
+    alignment: Alignment.centerLeft,
+    child: Container(
+      margin: const EdgeInsets.only(bottom: 8),
+      padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
+      decoration: BoxDecoration(
+        color: Theme.of(context).colorScheme.surfaceContainerHighest,
+        borderRadius: BorderRadius.circular(16),
+      ),
+      child: Row(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          const SizedBox(
+            width: 14,
+            height: 14,
+            child: CircularProgressIndicator(strokeWidth: 2),
+          ),
+          const SizedBox(width: 10),
+          Text(_service.isRemote ? '正在询问在线助手…' : '正在读取本地统计…'),
+        ],
+      ),
+    ),
+  );
+
+  /// 快捷问题。每个都能在本地模式下拿到确定答案，不靠在线模型。
+  static const _quickQuestions = [
+    '今天用了几次？',
+    '最近有异常吗？',
+    '查看最近一周',
+    '有什么建议？',
+    '数据是最新的吗？',
+    '设备时间对吗？',
+    '一共有多少条记录？',
+    '空白那几天怎么看？',
+  ];
+
+  Widget _buildQuickQuestions() => SingleChildScrollView(
+    scrollDirection: Axis.horizontal,
+    // 不给固定高度：系统字号放大时，固定高度会把 chip 里的文字挤爆。
+    child: Row(
+      children: [for (final question in _quickQuestions) _quickQuestion(question)],
+    ),
+  );
 
   Widget _quickQuestion(String question) {
     return Padding(
@@ -456,37 +715,43 @@ class _AssistantPageState extends State<AssistantPage> {
   }
 
   Widget _buildInputBar() {
-    return SafeArea(
-      child: Padding(
-        padding: const EdgeInsets.fromLTRB(12, 4, 12, 12),
-        child: Row(
-          children: [
-            Expanded(
-              child: TextField(
-                controller: _inputController,
-                maxLength: 1000,
-                textInputAction: TextInputAction.send,
-                onSubmitted: (_) => _send(),
-                decoration: const InputDecoration(
-                  hintText: '输入关于记录的问题',
-                  border: OutlineInputBorder(),
-                ),
+    final remote = _service.isRemote;
+    final accent = remote ? _onlineAccent : _localAccent;
+    return Padding(
+      padding: const EdgeInsets.fromLTRB(12, 4, 12, 12),
+      child: Row(
+        children: [
+          Expanded(
+            child: TextField(
+              controller: _inputController,
+              maxLength: 1000,
+              textInputAction: TextInputAction.send,
+              onSubmitted: (_) => _send(),
+              decoration: InputDecoration(
+                // 在线模式可以问记录以外的问题，提示语跟着说清楚；本地模式答不了，
+                // 就不要许这个愿。
+                hintText: remote ? '问记录，也可以问健康常识' : '输入关于记录的问题',
+                border: const OutlineInputBorder(),
               ),
             ),
-            const SizedBox(width: 8),
-            IconButton.filled(
-              onPressed: _sending ? null : _send,
-              icon: _sending
-                  ? const SizedBox(
-                      width: 18,
-                      height: 18,
-                      child: CircularProgressIndicator(strokeWidth: 2),
-                    )
-                  : const Icon(Icons.send),
-              tooltip: '发送',
+          ),
+          const SizedBox(width: 8),
+          IconButton.filled(
+            onPressed: _sending ? null : _send,
+            style: IconButton.styleFrom(
+              backgroundColor: accent,
+              foregroundColor: Colors.white,
             ),
-          ],
-        ),
+            icon: _sending
+                ? const SizedBox(
+                    width: 18,
+                    height: 18,
+                    child: CircularProgressIndicator(strokeWidth: 2),
+                  )
+                : const Icon(Icons.send),
+            tooltip: '发送',
+          ),
+        ],
       ),
     );
   }

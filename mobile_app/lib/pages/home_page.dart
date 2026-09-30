@@ -9,6 +9,7 @@ import '../models/record_filter.dart';
 import '../models/record_summary.dart';
 import '../services/csv_export_service.dart';
 import '../services/record_controller.dart';
+import '../theme/app_theme.dart';
 
 /// B supplies BLE UI here. Always receives the DEVICE repository, even while
 /// the user is browsing demo data. Never write device events to the demo store.
@@ -22,10 +23,14 @@ class HomePage extends StatefulWidget {
       {super.key,
       required this.controller,
       this.connectionBuilder,
-      this.exportRecords});
+      this.exportRecords,
+      this.themeController});
   final RecordController controller;
   final DeviceConnectionBuilder? connectionBuilder;
   final ExportRecords? exportRecords;
+
+  /// 外观设置的持有者，原样转交给助手页；为空时助手页不显示外观菜单。
+  final AppThemeController? themeController;
   @override
   State<HomePage> createState() => _HomePageState();
 }
@@ -127,6 +132,7 @@ class _HomePageState extends State<HomePage> with WidgetsBindingObserver {
     await Navigator.of(context).push(MaterialPageRoute<void>(
         builder: (_) => AssistantPage(
             assistantContext: initial.toAssistantContext(source),
+            themeController: widget.themeController,
             contextLoader: () async => RecordSummary.calculate(
                     await repo.readAll(),
                     now: data.clock(),

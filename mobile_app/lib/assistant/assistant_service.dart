@@ -24,12 +24,33 @@ class AssistantService {
     required AssistantContext context,
   }) async {
     final answer = await _provider.reply(question: question, context: context);
+    if (!isRemote) {
+      // 本地回答就是由同一份摘要算出来的，不存在编造，也没有来源标记可拆。
+      return ChatMessage(
+        role: ChatRole.assistant,
+        text: answer,
+        createdAt: DateTime.now(),
+        source: ChatSource.local,
+      );
+    }
 
+    final parsed = parseRemoteAnswer(answer);
+    if (parsed.isKnowledge) {
+      // 通用知识回答不参与数字回验：里面的数字（例如「全球约 3 亿人」）本来就不
+      // 来自摘要，拿摘要去比对只会把正常回答误判成编造，还得跟一句莫名其妙的提醒。
+      return ChatMessage(
+        role: ChatRole.assistant,
+        text: '${parsed.body}\n\n$remoteKnowledgeNote',
+        createdAt: DateTime.now(),
+        source: ChatSource.knowledge,
+      );
+    }
     return ChatMessage(
       role: ChatRole.assistant,
-      // 只有联网回答需要回验：本地回答就是由同一份摘要算出来的，不存在编造。
-      text: isRemote ? verifyRemoteAnswer(answer, context, now: _now) : answer,
+      // 只有用到记录的联网回答需要回验。
+      text: verifyRemoteAnswer(parsed.body, context, now: _now),
       createdAt: DateTime.now(),
+      source: ChatSource.online,
     );
   }
 }
