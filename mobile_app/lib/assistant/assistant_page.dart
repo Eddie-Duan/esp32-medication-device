@@ -446,12 +446,24 @@ class _AssistantPageState extends State<AssistantPage> {
             Row(
               mainAxisAlignment: MainAxisAlignment.spaceAround,
               children: [
-                _summaryItem(
-                  data.isDemo ? '今日 · 演示' : '今日',
-                  '${data.todayCount} 次',
+                // 三列都得能被压窄。Row 里没有弹性项时，每一项都按文字固有宽度占位，
+                // 系统字号放大后「近 7 天疑似无效」这种长标签就会把整行顶出卡片
+                // （实测 1.5 倍字号、375 宽时横向溢出 12 像素）。
+                Flexible(
+                  child: _summaryItem(
+                    data.isDemo ? '今日 · 演示' : '今日',
+                    '${data.todayCount} 次',
+                  ),
                 ),
-                _summaryItem('近 7 天', '${data.last7DaysCount} 次'),
-                _summaryItem('近 7 天疑似无效', '${data.invalidEventCount} 条'),
+                Flexible(
+                  child: _summaryItem('近 7 天', '${data.last7DaysCount} 次'),
+                ),
+                Flexible(
+                  child: _summaryItem(
+                    '近 7 天疑似无效',
+                    '${data.invalidEventCount} 条',
+                  ),
+                ),
               ],
             ),
             const SizedBox(height: 12),
@@ -534,9 +546,18 @@ class _AssistantPageState extends State<AssistantPage> {
   Widget _summaryItem(String title, String value) {
     return Column(
       children: [
-        Text(title, style: Theme.of(context).textTheme.labelMedium),
+        // 被压窄后标题会折行，居中才不像排版事故。
+        Text(
+          title,
+          style: Theme.of(context).textTheme.labelMedium,
+          textAlign: TextAlign.center,
+        ),
         const SizedBox(height: 4),
-        Text(value, style: Theme.of(context).textTheme.titleMedium),
+        Text(
+          value,
+          style: Theme.of(context).textTheme.titleMedium,
+          textAlign: TextAlign.center,
+        ),
       ],
     );
   }

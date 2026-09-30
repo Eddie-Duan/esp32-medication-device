@@ -98,6 +98,11 @@ Future<void> _pump(
   tester.view.devicePixelRatio = 1;
   addTearDown(tester.view.resetPhysicalSize);
   addTearDown(tester.view.resetDevicePixelRatio);
+  // viewInsets 同样是全局视图状态，框架不会替你还原，必须挂 tearDown。
+  // 用例末尾手工还原是有条件的：用例在中途断言失败时那一行根本执行不到，
+  // 剩下的用例就全都带着一个「键盘一直按着」的窗口跑——列表被压矮、
+  // 懒构建的行不再被建出来，于是报出「状态没丢、却找不到那条消息」的假失败。
+  addTearDown(() => tester.view.viewInsets = const FakeViewPadding());
   await tester.pumpWidget(
     MaterialApp(
       builder: (context, child) => MediaQuery(
@@ -251,7 +256,10 @@ void main() {
 
   testWidgets('取消清空时什么都不动', (tester) async {
     final chats = _MemoryChatStore();
-    await _pump(tester, chats: chats);
+    // 视口给足高度：列表是懒构建的，滚出视口（连同 250 逻辑像素的缓存区）的
+    // 行压根不会被建出来。这条用例问的是「取消后对话还在不在」，不该顺带
+    // 依赖滚动位置，否则它在「回答恰好很长」时会给出误导性的红。
+    await _pump(tester, chats: chats, size: const Size(420, 1400));
     await _ask(tester, '随便问问');
 
     await tester.tap(find.byTooltip('更多'));
