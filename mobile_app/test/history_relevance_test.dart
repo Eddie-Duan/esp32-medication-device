@@ -1,5 +1,4 @@
 import 'package:flutter_test/flutter_test.dart';
-import 'package:medication_device_app/assistant/assistant_provider.dart';
 import 'package:medication_device_app/assistant/history_relevance.dart';
 
 void main() {

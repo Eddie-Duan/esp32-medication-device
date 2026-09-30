@@ -1226,12 +1226,12 @@ class _AssistantPageState extends State<AssistantPage> {
           ),
           TextButton(
             onPressed: _cancelPending,
-            child: const Text('取消'),
             style: TextButton.styleFrom(
               visualDensity: VisualDensity.compact,
               padding: const EdgeInsets.symmetric(horizontal: 8),
               tapTargetSize: MaterialTapTargetSize.shrinkWrap,
             ),
+            child: const Text('取消'),
           ),
         ],
       ),
@@ -1272,12 +1272,12 @@ class _AssistantPageState extends State<AssistantPage> {
           ),
           TextButton(
             onPressed: _cancelPending,
-            child: const Text('停止'),
             style: TextButton.styleFrom(
               visualDensity: VisualDensity.compact,
               padding: const EdgeInsets.symmetric(horizontal: 8),
               tapTargetSize: MaterialTapTargetSize.shrinkWrap,
             ),
+            child: const Text('停止'),
           ),
         ],
       ),

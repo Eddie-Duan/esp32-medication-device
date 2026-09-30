@@ -151,10 +151,9 @@ class _FailOnceProvider implements AssistantProvider {
 
 /// 延迟回答：专门观察等待中的「取消」——回答迟到后要被丢弃。
 class _SlowAnswer implements AssistantProvider {
-  _SlowAnswer(this.delay, [this.answer = '今天使用 2 次。']);
+  _SlowAnswer(this.delay);
 
   final Duration delay;
-  final String answer;
 
   @override
   Future<String> reply({
@@ -163,7 +162,8 @@ class _SlowAnswer implements AssistantProvider {
     List<String> references = const [],
   }) async {
     await Future<void>.delayed(delay);
-    return answer;
+    // 内容无关紧要：这条用例只关心迟到的回答会被丢弃。
+    return '今天使用 2 次。';
   }
 }
 
