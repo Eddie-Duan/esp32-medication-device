@@ -595,7 +595,8 @@ void main() {
     await tester.tap(find.text('朗读').last);
     await tester.pump();
 
-    // 页面里不止一个富文本，按内容取那条回答，不靠「只有一个」碰运气。
+    // _flatten 会把最外层那个「只有 children、没有 text」的根节点也带出来，
+    // 断言片段文本之前先滤掉它（原测试用 text == '2' 过滤，天然躲过了这一层）。
     List<TextSpan> answerSpans() => _flatten(
       tester
           .widgetList<Text>(
@@ -608,7 +609,7 @@ void main() {
                 widget.textSpan!.toPlainText().contains('近 7 天共 3 次'),
           )
           .textSpan!,
-    );
+    ).where((span) => span.text != null).toList();
 
     // 还没开始读（引擎也还没回报进度）：整段都是正常样式。
     expect(
