@@ -139,29 +139,68 @@ class _AssistantPageState extends State<AssistantPage> {
     return created;
   }
 
-  Future<void> _speak(String text) async {
+  /// 正在朗读的那条回答，以及已读到的字符数（未读部分在正文里显示成灰色）。
+  ///
+  /// 存消息对象而不是下标：列表里的消息会因为反馈被替换成副本，下标不稳。
+  ChatMessage? _speakingMessage;
+  int _spokenChars = 0;
+
+  /// 每次开始朗读 +1。迟到的进度/结束回调带着旧代号，直接丢掉，
+  /// 免得上一段的进度盖到刚开的那一段上。
+  int _speechGeneration = 0;
+
+  /// 朗读一条回答；同一条正在读时再点一次就是停止（按钮会变成「停止」）。
+  Future<void> _speak(ChatMessage message) async {
+    if (identical(_speakingMessage, message)) {
+      await _stopSpeaking();
+      return;
+    }
+    final generation = ++_speechGeneration;
+    // 只读最新一句：先停掉上一段，但**不**把界面收回「朗读」——紧接着就要播新的。
+    await _stopSpeakerOnly();
+    if (!mounted || generation != _speechGeneration) return;
+    setState(() {
+      _speakingMessage = message;
+      _spokenChars = 0;
+    });
     try {
       final speaker = _resolvedSpeaker;
-      // 先停掉上一句再读新的：同一时刻只有一段语音（「只读最新一句」）。
       await speaker.setRate(_speechRate);
       await speaker.setPitch(_speechPitch);
-      await speaker.stop();
-      await speaker.speak(text);
+      await speaker.speak(
+        message.text,
+        onProgress: (endOffset) {
+          // 引擎按「已读到第几个字符」回报；过期的那一段直接忽略。
+          if (!mounted || generation != _speechGeneration) return;
+          if (endOffset == _spokenChars) return;
+          setState(() => _spokenChars = endOffset);
+        },
+      );
     } catch (_) {
       // 引擎缺失/初始化失败是设备差异，不是错误路径里要回显的东西；
       // 只给一句固定提示，不让用户以为按了没反应。
-      if (!mounted) return;
-      ScaffoldMessenger.of(
-        context,
-      ).showSnackBar(const SnackBar(content: Text('此设备暂不支持朗读。')));
+      if (mounted) {
+        ScaffoldMessenger.of(
+          context,
+        ).showSnackBar(const SnackBar(content: Text('此设备暂不支持朗读。')));
+      }
+    } finally {
+      // 读完、出错或被停：收回「停止」。期间若又开了新的一段（代号变了），
+      // 就不要动它的状态。
+      if (mounted && generation == _speechGeneration) {
+        setState(() {
+          _speakingMessage = null;
+          _spokenChars = 0;
+        });
+      }
     }
   }
 
   /// 已经创建的朗读引擎；没有就返回 null（注入的优先）。
   AssistantSpeaker? get _existingSpeaker => widget.speaker ?? _speaker;
 
-  /// 新问题开始时停掉上一段回答。没有引擎时不创建——别为「停一下」碰平台通道。
-  Future<void> _stopSpeaking() async {
+  /// 只停引擎，不动界面状态（开始读新一段前用，界面紧接着要换成新的一段）。
+  Future<void> _stopSpeakerOnly() async {
     final speaker = _existingSpeaker;
     if (speaker == null) return;
     try {
@@ -171,10 +210,24 @@ class _AssistantPageState extends State<AssistantPage> {
     }
   }
 
+  /// 用户点「停止」（以及清空对话）时用：停引擎并把界面收回「朗读」。
+  ///
+  /// 没有引擎时不创建——别为「停一下」碰平台通道。
+  Future<void> _stopSpeaking() async {
+    _speechGeneration++;
+    if (mounted) {
+      setState(() {
+        _speakingMessage = null;
+        _spokenChars = 0;
+      });
+    }
+    await _stopSpeakerOnly();
+  }
+
   /// 开了自动朗读就播最新回答；不 await，别让朗读卡住界面。
-  void _maybeAutoSpeak(String text) {
+  void _maybeAutoSpeak(ChatMessage message) {
     if (!_autoSpeak) return;
-    unawaited(_speak(text));
+    unawaited(_speak(message));
   }
 
   /// 开场白是 App 自己写的，不带来源标（它不是哪个上游的回答）。
@@ -284,7 +337,7 @@ class _AssistantPageState extends State<AssistantPage> {
         if (!mounted || generation != _requestGeneration) return;
         setState(() => _messages.add(answer));
         _persistHistory();
-        _maybeAutoSpeak(answer.text);
+        _maybeAutoSpeak(answer);
       }
     } catch (error) {
       if (!mounted || generation != _requestGeneration) return;
@@ -345,7 +398,7 @@ class _AssistantPageState extends State<AssistantPage> {
       _streamText = '';
     });
     _persistHistory();
-    _maybeAutoSpeak(message.text);
+    _maybeAutoSpeak(message);
   }
 
   /// 失败气泡：来源按提问那一刻的上游标，文案固定、不回显任何上游内容。
@@ -1134,12 +1187,19 @@ class _AssistantPageState extends State<AssistantPage> {
     );
   }
 
-  /// 「朗读」按钮：只在助手气泡里出现，用户自己的提问不提供朗读。
+  /// 「朗读 / 停止」按钮：只在助手气泡里出现，用户自己的提问不提供朗读。
+  ///
+  /// 正在读这一条时按钮变成「停止」，再点一次就停——朗读因此有了开关，
+  /// 而不是点下去只能等它读完。
   Widget _buildSpeakButton(ChatMessage message) {
+    final speaking = identical(_speakingMessage, message);
     return TextButton.icon(
-      onPressed: () => _speak(message.text),
-      icon: const Icon(Icons.volume_up_outlined, size: 16),
-      label: const Text('朗读'),
+      onPressed: () => _speak(message),
+      icon: Icon(
+        speaking ? Icons.stop_circle_outlined : Icons.volume_up_outlined,
+        size: 16,
+      ),
+      label: Text(speaking ? '停止' : '朗读'),
       style: TextButton.styleFrom(
         visualDensity: VisualDensity.compact,
         padding: const EdgeInsets.symmetric(horizontal: 8),
@@ -1186,7 +1246,13 @@ class _AssistantPageState extends State<AssistantPage> {
     final index = _messages.indexOf(message);
     if (index < 0) return;
     final toggled = message.feedback == feedback ? ChatFeedback.none : feedback;
-    setState(() => _messages[index] = message.copyWith(feedback: toggled));
+    setState(() {
+      _messages[index] = message.copyWith(feedback: toggled);
+      // 正在读这一条时把朗读目标一起换成副本，否则「停止」与高亮会跟着丢。
+      if (identical(_speakingMessage, message)) {
+        _speakingMessage = _messages[index];
+      }
+    });
     if (feedback == ChatFeedback.down &&
         toggled == ChatFeedback.down &&
         message.source != ChatSource.local) {
@@ -1218,21 +1284,53 @@ class _AssistantPageState extends State<AssistantPage> {
   }
 
   /// 回答正文：把声明/个人数据/问题/正文拆成不同样式（见 answer_styling.dart）。
+  ///
+  /// 正在朗读这条回答时，**还没读到的部分显示成灰色**，用户能看出读到哪里了。
   Widget _buildAnswerText(ChatMessage message) {
     // 通用知识回答里的数字是科普（如「全球约 3 亿人」），不是用户记录，不标蓝。
     final dataNumbers = message.source == ChatSource.knowledge
         ? const <int>{}
         : personalDataNumbers(_context);
     final spans = styleAnswer(message.text, dataNumbers: dataNumbers);
-    return Text.rich(
-      TextSpan(
-        children: [
-          for (final span in spans)
-            TextSpan(text: span.text, style: _spanStyle(span.kind)),
-        ],
-      ),
-    );
+    final readChars = identical(_speakingMessage, message) ? _spokenChars : 0;
+    return Text.rich(TextSpan(children: _answerChildren(spans, readChars)));
   }
+
+  /// 把带样式的片段按「已读 / 未读」切开：已读保持原样式，未读换成灰色。
+  ///
+  /// 未读部分仍然带着该段的字重与斜体，只是颜色变灰，所以「这段是数字还是
+  /// 提醒」不会因为还没读到而看不出来。
+  List<InlineSpan> _answerChildren(List<AnswerSpan> spans, int readChars) {
+    final children = <InlineSpan>[];
+    var offset = 0;
+    for (final span in spans) {
+      final start = offset;
+      final end = offset + span.text.length;
+      offset = end;
+      if (readChars >= end) {
+        children.add(TextSpan(text: span.text, style: _spanStyle(span.kind)));
+      } else if (readChars <= start) {
+        children.add(TextSpan(text: span.text, style: _unreadStyle(span.kind)));
+      } else {
+        // 进度落在这一段中间：前一半已读、后一半未读。
+        final cut = readChars - start;
+        children.add(
+          TextSpan(
+            text: span.text.substring(0, cut),
+            style: _spanStyle(span.kind),
+          ),
+        );
+        children.add(
+          TextSpan(text: span.text.substring(cut), style: _unreadStyle(span.kind)),
+        );
+      }
+    }
+    return children;
+  }
+
+  /// 未读部分的样式：只把颜色换成灰色，字重与斜体保留。
+  TextStyle _unreadStyle(AnswerSpanKind kind) =>
+      _spanStyle(kind).copyWith(color: const Color(0xff9ca3af));
 
   /// 每种强调的样式。单套浅色主题下的固定值，不随模式切换。
   TextStyle _spanStyle(AnswerSpanKind kind) {

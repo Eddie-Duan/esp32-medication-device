@@ -1,3 +1,5 @@
+import 'dart:async';
+
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:medication_device_app/assistant/assistant_chat_store.dart';
@@ -68,15 +70,40 @@ class _FixedAnswer implements AssistantProvider {
 }
 
 /// 内存朗读引擎：记录读过的文本与停叫次数，不碰平台通道。
+///
+/// 真实引擎是**异步结束**的（而且 `FlutterTts.speak` 立刻返回，不能当读完信号用），
+/// 所以这里用一个 Completer 挂住：测试自己决定什么时候「读完」，也可以中途回报进度。
 class _MemorySpeaker implements AssistantSpeaker {
   final spoken = <String>[];
   int stops = 0;
 
-  @override
-  Future<void> speak(String text) async => spoken.add(text);
+  void Function(int endOffset)? _onProgress;
+  Completer<void>? _pending;
 
   @override
-  Future<void> stop() async => stops++;
+  Future<void> speak(String text, {void Function(int endOffset)? onProgress}) {
+    spoken.add(text);
+    _onProgress = onProgress;
+    final done = Completer<void>();
+    _pending = done;
+    return done.future;
+  }
+
+  /// 模拟引擎回报「已读到第 [endOffset] 个字符」。
+  void reportProgress(int endOffset) => _onProgress?.call(endOffset);
+
+  /// 模拟读完（或引擎结束），让 speak 返回的 Future 完成。
+  void finish() {
+    final done = _pending;
+    _pending = null;
+    if (done != null && !done.isCompleted) done.complete();
+  }
+
+  @override
+  Future<void> stop() async {
+    stops++;
+    finish();
+  }
 
   @override
   Future<void> setRate(double rate) async {}
@@ -529,6 +556,76 @@ void main() {
     await tester.pumpAndSettle();
     expect(speaker.spoken, hasLength(1));
     expect(speaker.spoken.first, contains('近 7 天共 3 次'));
+  });
+
+  testWidgets('朗读中那条回答的按钮变「停止」，再点一次就停', (tester) async {
+    final speaker = _MemorySpeaker();
+    await _pump(
+      tester,
+      service: AssistantService(provider: _FixedAnswer('近 7 天共 3 次。')),
+      speaker: speaker,
+    );
+    await _ask(tester, '最近有异常吗？');
+
+    await tester.tap(find.text('朗读').last);
+    await tester.pump();
+    expect(speaker.spoken, hasLength(1));
+    // 读的过程中那一条变成「停止」，另一个气泡（开场白）不受影响。
+    expect(find.text('停止'), findsOneWidget);
+    expect(find.text('朗读'), findsOneWidget);
+
+    await tester.tap(find.text('停止'));
+    await tester.pumpAndSettle();
+    expect(speaker.stops, 1);
+    // 停完回到「朗读」，可以再点。
+    expect(find.text('停止'), findsNothing);
+    expect(find.text('朗读'), findsNWidgets(2));
+  });
+
+  testWidgets('朗读时已读部分保持原样式，未读部分变灰', (tester) async {
+    final speaker = _MemorySpeaker();
+    await _pump(
+      tester,
+      service: AssistantService(provider: _FixedAnswer('近 7 天共 3 次。')),
+      speaker: speaker,
+    );
+    await _ask(tester, '最近有异常吗？');
+    await tester.tap(find.text('朗读').last);
+    await tester.pump();
+
+    // 未开始读时整段都是正常样式。
+    expect(
+      _flatten(
+        tester
+            .widget<Text>(
+              find.byWidgetPredicate(
+                (widget) => widget is Text && widget.textSpan != null,
+              ),
+            )
+            .textSpan!,
+      ).every((span) => span.style?.color != const Color(0xff9ca3af)),
+      isTrue,
+    );
+
+    // 引擎回报「已读到第 4 个字符」：前 4 个字（「近 7 」）是已读，后面变灰。
+    speaker.reportProgress(4);
+    await tester.pump();
+    final spans = _flatten(
+      tester
+          .widget<Text>(
+            find.byWidgetPredicate(
+              (widget) => widget is Text && widget.textSpan != null,
+            ),
+          )
+          .textSpan!,
+    );
+    expect(spans.first.text, '近 7 ');
+    expect(spans.first.style?.color, isNot(const Color(0xff9ca3af)));
+    expect(spans[1].text, '天共 ');
+    expect(spans[1].style?.color, const Color(0xff9ca3af));
+    // 还没读到的数字也不该保留数据蓝：没读到就不该看起来像已经读过了。
+    expect(spans[2].text, '3');
+    expect(spans[2].style?.color, const Color(0xff9ca3af));
   });
 
   testWidgets('在线流式回答逐字滚出，结束后落成带来源标的回答', (tester) async {

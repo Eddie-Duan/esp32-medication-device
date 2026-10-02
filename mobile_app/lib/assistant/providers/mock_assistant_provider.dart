@@ -211,6 +211,7 @@ class MockAssistantProvider implements AssistantProvider {
 
     if (_matchesAny(normalizedQuestion, const {'朗读', '读出来', '读回答', '语音', '语速', '音调'})) {
       return '每条助手回答右下角有「朗读」按钮，用 Android 系统语音离线朗读，语音不出手机；'
+          '朗读时那个按钮会变成「停止」，再点一次就停，没读到的部分会显示成灰色；'
           '「更多」→「朗读设置」可开自动朗读、调语速和音调。';
     }
 
