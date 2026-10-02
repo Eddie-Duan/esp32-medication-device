@@ -574,9 +574,11 @@ void main() {
     expect(find.text('停止'), findsOneWidget);
     expect(find.text('朗读'), findsOneWidget);
 
+    // 提问开始、开始朗读各已经停过一次了，这里只断言「这一次又停了一次」。
+    final stopsBefore = speaker.stops;
     await tester.tap(find.text('停止'));
     await tester.pumpAndSettle();
-    expect(speaker.stops, 1);
+    expect(speaker.stops, stopsBefore + 1);
     // 停完回到「朗读」，可以再点。
     expect(find.text('停止'), findsNothing);
     expect(find.text('朗读'), findsNWidgets(2));
@@ -593,32 +595,33 @@ void main() {
     await tester.tap(find.text('朗读').last);
     await tester.pump();
 
-    // 未开始读时整段都是正常样式。
+    // 页面里不止一个富文本，按内容取那条回答，不靠「只有一个」碰运气。
+    List<TextSpan> answerSpans() => _flatten(
+      tester
+          .widgetList<Text>(
+            find.byWidgetPredicate(
+              (widget) => widget is Text && widget.textSpan != null,
+            ),
+          )
+          .firstWhere(
+            (widget) =>
+                widget.textSpan!.toPlainText().contains('近 7 天共 3 次'),
+          )
+          .textSpan!,
+    );
+
+    // 还没开始读（引擎也还没回报进度）：整段都是正常样式。
     expect(
-      _flatten(
-        tester
-            .widget<Text>(
-              find.byWidgetPredicate(
-                (widget) => widget is Text && widget.textSpan != null,
-              ),
-            )
-            .textSpan!,
-      ).every((span) => span.style?.color != const Color(0xff9ca3af)),
+      answerSpans().every(
+        (span) => span.style?.color != const Color(0xff9ca3af),
+      ),
       isTrue,
     );
 
     // 引擎回报「已读到第 4 个字符」：前 4 个字（「近 7 」）是已读，后面变灰。
     speaker.reportProgress(4);
     await tester.pump();
-    final spans = _flatten(
-      tester
-          .widget<Text>(
-            find.byWidgetPredicate(
-              (widget) => widget is Text && widget.textSpan != null,
-            ),
-          )
-          .textSpan!,
-    );
+    final spans = answerSpans();
     expect(spans.first.text, '近 7 ');
     expect(spans.first.style?.color, isNot(const Color(0xff9ca3af)));
     expect(spans[1].text, '天共 ');

@@ -1292,22 +1292,27 @@ class _AssistantPageState extends State<AssistantPage> {
         ? const <int>{}
         : personalDataNumbers(_context);
     final spans = styleAnswer(message.text, dataNumbers: dataNumbers);
-    final readChars = identical(_speakingMessage, message) ? _spokenChars : 0;
+    // 只有真在朗读、而且**引擎真的回报过进度**时才染色：不回报进度的引擎
+    // （例如 Android 26 以下的设备）保持原样，否则整段会一直是灰的，
+    // 那比不高亮更糟。
+    final speaking = identical(_speakingMessage, message);
+    final readChars = speaking && _spokenChars > 0 ? _spokenChars : null;
     return Text.rich(TextSpan(children: _answerChildren(spans, readChars)));
   }
 
   /// 把带样式的片段按「已读 / 未读」切开：已读保持原样式，未读换成灰色。
   ///
+  /// [readChars] 为空表示「不做进度染色」——没在朗读，或者引擎还没回报进度。
   /// 未读部分仍然带着该段的字重与斜体，只是颜色变灰，所以「这段是数字还是
   /// 提醒」不会因为还没读到而看不出来。
-  List<InlineSpan> _answerChildren(List<AnswerSpan> spans, int readChars) {
+  List<InlineSpan> _answerChildren(List<AnswerSpan> spans, int? readChars) {
     final children = <InlineSpan>[];
     var offset = 0;
     for (final span in spans) {
       final start = offset;
       final end = offset + span.text.length;
       offset = end;
-      if (readChars >= end) {
+      if (readChars == null || readChars >= end) {
         children.add(TextSpan(text: span.text, style: _spanStyle(span.kind)));
       } else if (readChars <= start) {
         children.add(TextSpan(text: span.text, style: _unreadStyle(span.kind)));
