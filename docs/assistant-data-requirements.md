@@ -57,6 +57,6 @@ ESP32（Arduino 原型）──BLE──▶ 原型时间文本库 ──✗─�
 ## 相关文档
 
 - 规则集与边界：[`assistant-local-rules.md`](assistant-local-rules.md)
-- 在线助手的现行边界（BYOK，Key 不出手机）与 RAG/朗读：[`assistant-model-access.md`](assistant-model-access.md)
+- 在线助手的现行边界（BYOK，Key 加密保存在手机）与 RAG/朗读：[`assistant-model-access.md`](assistant-model-access.md)
 - 在线契约（网关已废弃，仅作历史）：[`protocol/xiaozhi-bridge.md`](../protocol/xiaozhi-bridge.md)
 - 派发顺序：[`android-roadmap.md`](android-roadmap.md)

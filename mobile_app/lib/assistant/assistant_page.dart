@@ -99,6 +99,10 @@ class _AssistantPageState extends State<AssistantPage> {
   /// 这样用户点了取消后，迟到的回答或错误不会再冒出来。
   int _requestGeneration = 0;
 
+  /// 当前在线服务对应的是哪条档案的 id。删除/编辑配置后据此判断要不要
+  /// 切回本地或重建服务（见 [_reconcileAfterConsole]）。
+  String? _onlineProfileId;
+
   @override
   void initState() {
     super.initState();
@@ -359,18 +363,32 @@ class _AssistantPageState extends State<AssistantPage> {
   Future<void> _changeMode(bool remote) async {
     if (_sending || remote == _service.isRemote) return;
     if (!remote) {
-      setState(() => _service = AssistantService());
+      setState(() {
+        _service = AssistantService();
+        _onlineProfileId = null;
+      });
       _appendNotice('已切回本地摘要，不联网。');
       return;
     }
     // 已经配置过就直接用选中的那条，不再弹窗——用户要的是「点一下就切」。
-    final provider = await buildSelectedProvider(_store);
+    final profile = await selectedProfile(_store);
     if (!mounted) return;
-    if (provider == null) {
+    if (profile == null) {
       await _openConsole();
       return;
     }
-    setState(() => _service = AssistantService(provider: provider, isRemote: true));
+    AssistantService service;
+    try {
+      service = AssistantService(provider: profile.toProvider(), isRemote: true);
+    } catch (_) {
+      // 地址不完整、Key 被清掉：去控制台让用户补全，而不是在这里报错。
+      await _openConsole();
+      return;
+    }
+    setState(() {
+      _service = service;
+      _onlineProfileId = profile.id;
+    });
     _appendNotice(_onlineNotice);
   }
 
@@ -386,9 +404,53 @@ class _AssistantPageState extends State<AssistantPage> {
       context: context,
       builder: (_) => AssistantApiConsole(store: _store),
     );
-    if (service == null || !mounted) return;
+    if (!mounted) return;
+    if (service != null) {
+      // 用户点了「使用」：控制台已把这条档案设为选中并返回对应服务。
+      // 记下档案 id，下次删除/编辑后据此判断要不要切回本地或重建服务。
+      final profile = await selectedProfile(_store);
+      if (!mounted) return;
+      setState(() {
+        _service = service;
+        _onlineProfileId = profile?.id;
+      });
+      _appendNotice(_onlineNotice);
+      return;
+    }
+    // 用户只是关闭，或在里面删除/编辑了配置：按落盘结果对齐正在使用的服务。
+    await _reconcileAfterConsole();
+  }
+
+  /// 控制台关闭后，把正在使用的在线服务与落盘结果对齐。
+  ///
+  /// 用户在控制台里删除/编辑配置时，页面拿不到「动了哪条」的信号，只能靠
+  /// 记住的档案 id 去核对：id 对应的档案没了 → 立即切回本地，不再用旧 Key；
+  /// 档案还在但内容变了 → 用新内容重建服务。
+  Future<void> _reconcileAfterConsole() async {
+    if (!_service.isRemote) return;
+    final state = await _store.load();
+    if (!mounted) return;
+    final profile = state.profileById(_onlineProfileId);
+    if (profile == null) {
+      setState(() {
+        _service = AssistantService();
+        _onlineProfileId = null;
+      });
+      _appendNotice('已删除当前使用的模型配置，已切回本地，不再调用该服务。');
+      return;
+    }
+    AssistantService service;
+    try {
+      service = AssistantService(provider: profile.toProvider(), isRemote: true);
+    } catch (_) {
+      setState(() {
+        _service = AssistantService();
+        _onlineProfileId = null;
+      });
+      _appendNotice('当前模型配置不完整，已切回本地。');
+      return;
+    }
     setState(() => _service = service);
-    _appendNotice(_onlineNotice);
   }
 
   /// 切换上游时插入一条分隔提示，**不再清空对话**。
@@ -448,11 +510,21 @@ class _AssistantPageState extends State<AssistantPage> {
       ),
     );
     if (confirmed != true || !mounted) return;
+    // 让进行中的回答失效：迟到的回答/错误不该落进清空后的对话。「停止等待」和
+    // 「清掉旧问题的重试入口、朗读」也在这里一起做。
+    _requestGeneration++;
+    _failedQuestion = null;
+    await _stopSpeaking();
     await _chatStore.clear();
     if (!mounted) return;
-    setState(() => _messages
-      ..clear()
-      ..add(_welcomeMessage()));
+    setState(() {
+      _sending = false;
+      _streaming = false;
+      _streamText = '';
+      _messages
+        ..clear()
+        ..add(_welcomeMessage());
+    });
     _persistHistory();
   }
 

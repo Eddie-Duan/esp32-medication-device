@@ -237,7 +237,7 @@ const List<KnowledgeChunk> assistantKnowledge = [
     id: 'app.online',
     title: '怎么启用在线助手',
     body: '在助手页顶部点「在线」即可联网问答；第一次会引导添加自己的模型服务'
-        '（地址 + 你自己的 API Key + 模型名）。Key 只存本机安全存储、直接发给模型服务，'
+        '（地址 + 你自己的 API Key + 模型名）。Key 加密保存在手机、调用时直接发给所选模型服务，'
         '不经过团队服务器；没配置过也可以先用「本地」。',
     keywords: ['在线', '联网', '加 api', '添加 api', '接入', '自己的模型', '模型服务', 'api key'],
   ),

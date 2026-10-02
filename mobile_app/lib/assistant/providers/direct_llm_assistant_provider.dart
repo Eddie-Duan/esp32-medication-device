@@ -282,9 +282,13 @@ class DirectLlmAssistantProvider
   ///
   /// 按字节切行（换行符是 ASCII 0x0A），只对完整的一行做 UTF-8 解码，
   /// 这样 chunk 边界把某个中文多字节字符切两半也不会出乱码。
+  ///
+  /// 服务端正常结束会发 `data: [DONE]`。若流在没收到它之前就断了，说明只拿到
+  /// 半截回答——这里把它当失败抛出去，不让调用方把半截文字当完整回答保存。
   Stream<String> _parseSse(HttpClientResponse response) async* {
     var buffer = <int>[];
     var total = 0;
+    var sawDone = false;
     await for (final chunk in response) {
       total += chunk.length;
       if (total > maxResponseBytes) {
@@ -298,15 +302,34 @@ class DirectLlmAssistantProvider
           allowMalformed: true,
         );
         buffer = buffer.sublist(newline + 1);
-        final content = _sseDelta(line);
-        if (content != null && content.isNotEmpty) yield content;
+        if (_isDoneLine(line)) {
+          sawDone = true;
+        } else {
+          final content = _sseDelta(line);
+          if (content != null && content.isNotEmpty) yield content;
+        }
         newline = buffer.indexOf(0x0A);
       }
     }
     if (buffer.isNotEmpty) {
-      final content = _sseDelta(utf8.decode(buffer, allowMalformed: true));
-      if (content != null && content.isNotEmpty) yield content;
+      final line = utf8.decode(buffer, allowMalformed: true);
+      if (_isDoneLine(line)) {
+        sawDone = true;
+      } else {
+        final content = _sseDelta(line);
+        if (content != null && content.isNotEmpty) yield content;
+      }
     }
+    if (!sawDone) {
+      throw const AssistantException('模型回答中途中断，回答未完成，请重试。');
+    }
+  }
+
+  /// 一行是不是 SSE 的结束哨兵 `data: [DONE]`。
+  static bool _isDoneLine(String line) {
+    final trimmed = line.trim();
+    if (!trimmed.startsWith('data:')) return false;
+    return trimmed.substring('data:'.length).trim() == '[DONE]';
   }
 
   /// 从一行 SSE 里取增量文字；不是数据行、`[DONE]` 或解析不了就返回 null。

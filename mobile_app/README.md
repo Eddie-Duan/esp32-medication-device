@@ -17,12 +17,12 @@ Flutter / Dart 开发，A 的数据与页面已与 B 的 BLE 原型合并。本�
 
 ## 在线文字助手
 
-**在线助手的现行路线是「我自己的模型」（BYOK）：App 直连用户自己的 OpenAI 兼容模型，API Key 只能是用户自己的、存 `flutter_secure_storage`、绝不出手机。** 已放弃小智官方云（设备激活要求 ESP32 eFuse 里的 HMAC 密钥签名，手机做不到），也不再走自建小智智控台（大模型 Key 归服务器、记忆共享，与「Key 不出手机」冲突）。旧的自建网关 `server/assistant-gateway/` 保留为历史资料，不属于本轮交付。
+**在线助手的现行路线是「我自己的模型」（BYOK）：App 直连用户自己的 OpenAI 兼容模型，API Key 只能是用户自己的、加密保存在手机（`flutter_secure_storage`），调用时直接发送给所选模型服务、不经过团队服务器。** 已放弃小智官方云（设备激活要求 ESP32 eFuse 里的 HMAC 密钥签名，手机做不到），也不再走自建小智智控台（大模型 Key 归服务器、记忆共享，与「Key 加密保存在手机、不经过团队服务器」冲突）。旧的自建网关 `server/assistant-gateway/` 保留为历史资料，不属于本轮交付。
 
 在线助手设置里填：
 
 - **模型服务地址**（OpenAI 兼容的 `/chat/completions` 端点）；
-- **你自己的 API Key**（只写入手机安全存储，App 直连模型、不经过团队服务器）；
+- **你自己的 API Key**（加密保存在手机安全存储，App 直连模型、不经过团队服务器）；
 - **模型名**。
 
 不要在 App 里填团队共享 Key、小智账号密码、ESP32 eFuse 密钥或上游 Token——只填你自己的 Key。Key 的边界与风险见[模型接入与边界](../docs/assistant-model-access.md)。

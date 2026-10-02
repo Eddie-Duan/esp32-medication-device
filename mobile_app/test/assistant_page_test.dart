@@ -167,6 +167,27 @@ class _SlowAnswer implements AssistantProvider {
   }
 }
 
+/// 流式输出中途抛错的在线 provider：观察半截回答不会被落成完整回答。
+class _FailMidStreamProvider implements StreamingAssistantProvider {
+  @override
+  Future<String> reply({
+    required String question,
+    required AssistantContext context,
+    List<String> references = const [],
+  }) async => '今天使用 2 次。';
+
+  @override
+  Stream<String> replyStream({
+    required String question,
+    required AssistantContext context,
+    List<String> references = const [],
+    List<ChatTurn> history = const [],
+  }) async* {
+    yield '半截回答内容';
+    throw const AssistantException('模型回答中途中断，回答未完成，请重试。');
+  }
+}
+
 const _gateway = AssistantProfile(
   id: 'g1',
   name: '团队网关',
@@ -357,6 +378,33 @@ void main() {
     expect(chats.saved, hasLength(5)); // 两次切换各插一条提示
   });
 
+  testWidgets('删除正在使用的模型配置后切回本地，不再调用旧服务', (tester) async {
+    final store = _MemoryStore(
+      const AssistantCredentialState(profiles: [_gateway], selectedId: 'g1'),
+    );
+    await _pump(tester, store: store, size: const Size(800, 1600));
+
+    // 先切到在线（用 gateway 这条）。
+    await tester.tap(find.text('在线'));
+    await tester.pumpAndSettle();
+    expect(find.textContaining('已启用在线助手'), findsOneWidget);
+    expect(find.textContaining('不发送原始记录、设备标识或历史对话'), findsOneWidget);
+
+    // 打开管理 API，删掉正在用的这条。
+    await tester.tap(find.byTooltip('管理 API'));
+    await tester.pumpAndSettle();
+    await tester.tap(find.widgetWithText(TextButton, '删除'));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('确认删除'));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('关闭'));
+    await tester.pumpAndSettle();
+
+    // 删除后应立即切回本地，不再用旧 Key。
+    expect(find.textContaining('已删除当前使用的模型配置'), findsOneWidget);
+    expect(find.textContaining('不发送原始记录、设备标识或历史对话'), findsNothing);
+  });
+
   testWidgets('清空对话会删掉本机历史，只留开场白', (tester) async {
     final chats = _MemoryChatStore();
     await _pump(tester, chats: chats);
@@ -393,6 +441,36 @@ void main() {
     expect(chats.clears, 0);
     expect(chats.saved, hasLength(3));
     expect(find.textContaining('随便问问'), findsOneWidget);
+  });
+
+  testWidgets('清空聊天会让还在路上的回答失效，不再冒出来', (tester) async {
+    await _pump(
+      tester,
+      service: AssistantService(
+        provider: _SlowAnswer(const Duration(seconds: 3)),
+      ),
+      size: const Size(420, 1400),
+    );
+    await tester.enterText(find.byType(TextField), '今天用了几次？');
+    await tester.tap(find.widgetWithIcon(IconButton, Icons.send));
+    await tester.pump();
+    await tester.pump();
+    expect(find.text('取消'), findsOneWidget);
+
+    // 等待期间清空：用显式时长推进菜单/对话框动画，不用 pumpAndSettle——
+    // 它会一直推着思考气泡里的转圈动画往前走，还会顺带把慢回答的计时器也触发。
+    await tester.tap(find.byTooltip('更多'));
+    await tester.pump(const Duration(milliseconds: 500));
+    await tester.tap(find.text('清空对话'));
+    await tester.pump(const Duration(milliseconds: 500));
+    await tester.tap(find.text('清空'));
+    await tester.pump(const Duration(milliseconds: 500));
+
+    // 让慢回答计时器到点：代次已变，迟到回答被丢弃。
+    await tester.pump(const Duration(seconds: 3));
+    await tester.pump();
+    expect(find.textContaining('今天使用 2 次'), findsNothing);
+    expect(find.text('取消'), findsNothing);
   });
 
   testWidgets('「更多」菜单有对话、朗读与大字三项，不再有外观切换', (tester) async {
@@ -697,5 +775,24 @@ void main() {
     await tester.pumpAndSettle();
     expect(find.text('在线回答'), findsNothing);
     expect(find.textContaining('今天使用 2 次。'), findsNothing);
+  });
+
+  testWidgets('流式中途报错不落成回答，给「回答未完成」与重试入口', (tester) async {
+    await _pump(
+      tester,
+      service: AssistantService(
+        provider: _FailMidStreamProvider(),
+        isRemote: true,
+      ),
+      size: const Size(420, 1400),
+    );
+    await tester.enterText(find.byType(TextField), '最近怎么样');
+    await tester.tap(find.widgetWithIcon(IconButton, Icons.send));
+    await tester.pumpAndSettle();
+
+    expect(find.textContaining('回答未完成'), findsOneWidget);
+    expect(find.text('上次回答失败，点这里重试'), findsOneWidget);
+    // 半截回答没有落成一条正常回答。
+    expect(find.textContaining('半截回答内容'), findsNothing);
   });
 }

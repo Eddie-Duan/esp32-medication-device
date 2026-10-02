@@ -151,6 +151,11 @@ class MockAssistantProvider implements AssistantProvider {
     }
 
     if (_matchesAny(normalizedQuestion, const {'空白', '空着', '没记录', '漏记'})) {
+      // 一条记录都没有时，逐日全是 0，不能说「这 7 天都有记录」。
+      if (context.totalCount == 0) {
+        return '目前没有记录，近 7 天也没有设备动作。'
+            '没有记录只说明当天没有设备动作，不能确认是否服药。';
+      }
       final blanks = _notesFor(
         observations,
         const {'blank_days', 'uneven_days', 'recent_gap'},
@@ -221,7 +226,7 @@ class MockAssistantProvider implements AssistantProvider {
       'api key',
     })) {
       return '在助手页顶部点「在线」即可联网问答；第一次会引导添加自己的模型服务'
-          '（地址 + 你自己的 API Key + 模型名）。Key 只存本机安全存储、直接发给模型服务，'
+          '（地址 + 你自己的 API Key + 模型名）。Key 加密保存在手机、调用时直接发给所选模型服务，'
           '不经过团队服务器；没配置过也可以先用「本地」。';
     }
 

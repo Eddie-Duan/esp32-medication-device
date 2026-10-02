@@ -2,7 +2,7 @@
 
 ESP32 用药装置与 Flutter Android App，供 iGEM 原型开发与开源复现。**当前只继续开发 Android；iOS 工程及已有构建记录保留为历史资料，不再作为本轮交付目标。**
 
-**关于小智：已放弃。** Android App 既不能用 xiaozhi.me 官方云（设备激活要求用 ESP32 eFuse 里的 HMAC 密钥签名，手机做不到），也不继续走自建 `xiaozhi-esp32-server` 智控台（大模型 Key 归服务器、记忆共享，与「API Key 不出用户手机」冲突）。**在线助手的现行路线是 App 直连用户自己的模型（BYOK）**：Key 由用户运行时填入、存 `flutter_secure_storage`、绝不出手机，并带设备端 RAG 检索与朗读。旧的自建网关留作历史。规则见[模型接入与边界](docs/assistant-model-access.md)。
+**关于小智：已放弃。** Android App 既不能用 xiaozhi.me 官方云（设备激活要求用 ESP32 eFuse 里的 HMAC 密钥签名，手机做不到），也不继续走自建 `xiaozhi-esp32-server` 智控台（大模型 Key 归服务器、记忆共享，与「API Key 不经过团队服务器」冲突）。**在线助手的现行路线是 App 直连用户自己的模型（BYOK）**：Key 由用户运行时填入、加密保存在手机（`flutter_secure_storage`），调用时直接发送给所选模型服务、不经过团队服务器，并带设备端 RAG 检索与朗读。旧的自建网关留作历史。规则见[模型接入与边界](docs/assistant-model-access.md)。
 
 ## 系统组成
 
@@ -42,7 +42,7 @@ App 侧接口与上游解耦：切换网关上游不需要改 App。官方云这
 - 本轮分工与验收：[Android 开发路线](docs/android-roadmap.md)。
 - 连接现有硬件：[A+B 联调说明](docs/member-ab-integration.md)。
 - 本地规则集与安全边界：[助手规则说明](docs/assistant-local-rules.md)、[助手数据需求](docs/assistant-data-requirements.md)。
-- 本地专家 vs 联网大模型（BYOK、Key 不出手机、RAG 与朗读）：[模型接入与边界](docs/assistant-model-access.md)。
+- 本地专家 vs 联网大模型（BYOK、Key 加密保存在手机、RAG 与朗读）：[模型接入与边界](docs/assistant-model-access.md)。
 - 历史资料：小智官方云不可用原因与自建网关（已废弃）见 [docs/xiaozhi-official-cloud.md](docs/xiaozhi-official-cloud.md)、[server/assistant-gateway/README.md](server/assistant-gateway/README.md)、[protocol/xiaozhi-bridge.md](protocol/xiaozhi-bridge.md)。
 
 ```bash

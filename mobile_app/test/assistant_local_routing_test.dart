@@ -99,6 +99,15 @@ void main() {
     expect(answer, isNot(contains('漏服')));
   });
 
+  test('数据库为空时问空白：说目前没有记录，不说七天都有记录', () async {
+    final answer = await ask(
+      '空白那几天怎么看？',
+      const AssistantContext(totalCount: 0),
+    );
+    expect(answer, contains('目前没有记录'));
+    expect(answer, isNot(contains('都有记录')));
+  });
+
   test('涉及服药判断的问法一律不给结论', () async {
     for (final question in [
       '我今天漏服了吗？',

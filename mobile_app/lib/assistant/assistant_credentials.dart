@@ -181,12 +181,16 @@ class AssistantCredentialState {
 
   static const empty = AssistantCredentialState();
 
-  AssistantProfile? get selectedProfile {
+  /// 按 id 找一条档案；id 为 null 或找不到就返回 null。
+  AssistantProfile? profileById(String? id) {
+    if (id == null) return null;
     for (final profile in profiles) {
-      if (profile.id == selectedId) return profile;
+      if (profile.id == id) return profile;
     }
     return null;
   }
+
+  AssistantProfile? get selectedProfile => profileById(selectedId);
 
   AssistantCredentialState withSelection(String? id) =>
       AssistantCredentialState(profiles: profiles, selectedId: id);
@@ -284,6 +288,21 @@ class SecureAssistantCredentialsStore implements AssistantCredentialsStore {
   }
 }
 
+/// 读当前选中的档案，供页面「点一下切在线」和控制台关闭后的对齐使用。
+///
+/// 读档失败或没有选中项时返回 null。这里**不抛异常**也不回显任何凭据：
+/// 这是切换路径，不是配置路径。
+Future<AssistantProfile?> selectedProfile(
+  AssistantCredentialsStore store,
+) async {
+  try {
+    final state = await store.load();
+    return state.selectedProfile;
+  } catch (_) {
+    return null;
+  }
+}
+
 /// 读当前选中的档案并构造 provider，供页面「点一下切在线」使用。
 ///
 /// 没有选中项、或构造失败（地址/Key 不完整）时返回 null，由调用方转去打开控制台。
@@ -291,13 +310,12 @@ class SecureAssistantCredentialsStore implements AssistantCredentialsStore {
 Future<AssistantProvider?> buildSelectedProvider(
   AssistantCredentialsStore store,
 ) async {
+  final profile = await selectedProfile(store);
+  if (profile == null) return null;
   try {
-    final state = await store.load();
-    final profile = state.selectedProfile;
-    if (profile == null) return null;
     return profile.toProvider();
   } catch (_) {
-    // 读档失败、地址不完整、Key 被清掉……都只是「这次没法一键切」，
+    // 地址不完整、Key 被清掉……都只是「这次没法一键切」，
     // 交给调用方打开管理页，不要在这里把异常抛给页面。
     return null;
   }

@@ -236,6 +236,36 @@ void main() {
     );
   });
 
+  test('SSE 流没收到 [DONE] 就结束，视为回答未完成并报错', () async {
+    await withServer(
+      (request) async {
+        request.response.headers.contentType = ContentType(
+          'text',
+          'event-stream',
+          charset: 'utf-8',
+        );
+        request.response.write(
+          'data: {"choices":[{"delta":{"content":"半截回答"}}]}\n\n',
+        );
+        await request.response.close();
+      },
+      (baseUrl) async {
+        await expectLater(
+          providerFor(baseUrl)
+              .replyStream(question: '最近怎么样？', context: context)
+              .toList(),
+          throwsA(
+            isA<AssistantException>().having(
+              (error) => error.message,
+              'message',
+              contains('回答未完成'),
+            ),
+          ),
+        );
+      },
+    );
+  });
+
   test('streaming falls back to one chunk when the server returns plain JSON',
       () async {
     await withServer(
