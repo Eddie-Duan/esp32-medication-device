@@ -459,12 +459,21 @@ void main() {
 
     // 等待期间清空：用显式时长推进菜单/对话框动画，不用 pumpAndSettle——
     // 它会一直推着思考气泡里的转圈动画往前走，还会顺带把慢回答的计时器也触发。
+    //
+    // 每一步必须先 pump 一帧、再按时长推进：插入路由那一帧动画才开始，只 pump
+    // 一次时长等于让它从 0 走起，菜单还没画完就点，命中的会是模态遮罩而不是
+    // 菜单项（日志里表现为 NEEDS-PAINT + 命中 ModalBarrier，随后找不到「清空」）。
+    Future<void> advanceOverlays() async {
+      await tester.pump();
+      await tester.pump(const Duration(milliseconds: 500));
+    }
+
     await tester.tap(find.byTooltip('更多'));
-    await tester.pump(const Duration(milliseconds: 500));
+    await advanceOverlays();
     await tester.tap(find.text('清空对话'));
-    await tester.pump(const Duration(milliseconds: 500));
+    await advanceOverlays();
     await tester.tap(find.text('清空'));
-    await tester.pump(const Duration(milliseconds: 500));
+    await advanceOverlays();
 
     // 让慢回答计时器到点：代次已变，迟到回答被丢弃。
     await tester.pump(const Duration(seconds: 3));
