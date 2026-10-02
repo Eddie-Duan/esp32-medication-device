@@ -230,6 +230,9 @@ const _context = AssistantContext(
   dailyCounts: [0, 1, 0, 0, 1, 0, 1],
 );
 
+/// 朗读进度里「还没读到」的那部分用的灰色，与 `assistant_page.dart` 保持一致。
+const _unreadGrey = Color(0xff9ca3af);
+
 /// 界面上的九个快捷问题，与 `_AssistantPageState._quickQuestions` 一一对应。
 const _quickQuestions = [
   '今天用了几次？',
@@ -613,9 +616,7 @@ void main() {
 
     // 还没开始读（引擎也还没回报进度）：整段都是正常样式。
     expect(
-      answerSpans().every(
-        (span) => span.style?.color != const Color(0xff9ca3af),
-      ),
+      answerSpans().every((span) => span.style?.color != _unreadGrey),
       isTrue,
     );
 
@@ -623,13 +624,21 @@ void main() {
     speaker.reportProgress(4);
     await tester.pump();
     final spans = answerSpans();
-    expect(spans.first.text, '近 7 ');
-    expect(spans.first.style?.color, isNot(const Color(0xff9ca3af)));
-    expect(spans[1].text, '天共 ');
-    expect(spans[1].style?.color, const Color(0xff9ca3af));
+
+    // 正文会被数字切成多段（「近 7 天共 3 次。」→ 近 / 7 / 天共 / 3 / 次。），
+    // 所以不按下标断言，改成「已读的拼起来 / 变灰的拼起来」分别是哪一段。
+    String joinedWhere({required bool greyed}) => spans
+        .where((span) => (span.style?.color == _unreadGrey) == greyed)
+        .map((span) => span.text!)
+        .join();
+    expect(joinedWhere(greyed: false), '近 7 ');
+    expect(joinedWhere(greyed: true), '天共 3 次。');
+
     // 还没读到的数字也不该保留数据蓝：没读到就不该看起来像已经读过了。
-    expect(spans[2].text, '3');
-    expect(spans[2].style?.color, const Color(0xff9ca3af));
+    expect(
+      spans.where((span) => span.text == '3').single.style?.color,
+      _unreadGrey,
+    );
   });
 
   testWidgets('在线流式回答逐字滚出，结束后落成带来源标的回答', (tester) async {
