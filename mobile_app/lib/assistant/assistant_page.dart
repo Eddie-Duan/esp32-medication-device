@@ -45,7 +45,7 @@ class AssistantPage extends StatefulWidget {
   /// 聊天记录存储。测试注入内存实现；默认写本机偏好存储。
   final AssistantChatStore? chatStore;
 
-  /// 朗读回答用的引擎。测试注入假实现；默认用 Android 系统 TTS（离线、不出手机）。
+  /// 朗读回答用的引擎。测试注入假实现；默认用手机的 Android 系统 TTS。
   final AssistantSpeaker? speaker;
 
   /// 朗读与多轮偏好的存储。测试注入内存实现；默认写本机偏好存储。

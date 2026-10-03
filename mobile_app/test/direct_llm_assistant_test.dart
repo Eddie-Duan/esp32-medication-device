@@ -362,6 +362,59 @@ void main() {
     }
   });
 
+  for (final sendPartial in [false, true]) {
+    for (final sendDone in [false, true]) {
+      test(
+        'SSE error fails safely (partial=$sendPartial, DONE=$sendDone)',
+        () async {
+          await withServer(
+            (request) async {
+              await request.drain<void>();
+              request.response.headers.contentType = ContentType(
+                'text',
+                'event-stream',
+                charset: 'utf-8',
+              );
+              if (sendPartial) {
+                request.response.write(
+                  'data: {"choices":[{"delta":{"content":"半截回答"}}]}\n\n',
+                );
+              }
+              request.response.write(
+                'data: ${jsonEncode({
+                  'error': {'message': 'private user-private-key', 'type': 'server_error'},
+                })}\n\n',
+              );
+              if (sendDone) request.response.write('data: [DONE]\n\n');
+              await request.response.close();
+            },
+            (baseUrl) async {
+              final completion = StreamCompletion();
+              final received = <String>[];
+              try {
+                await for (final delta in providerFor(baseUrl).replyStream(
+                  question: '最近怎么样？',
+                  context: context,
+                  completion: completion,
+                )) {
+                  received.add(delta);
+                }
+                fail(
+                  'An explicit upstream error must not complete successfully.',
+                );
+              } on AssistantException catch (error) {
+                expect(error.message, contains('回答未完成'));
+                expect(error.message, isNot(contains('user-private-key')));
+                expect(error.message, isNot(contains('private')));
+                expect(received, sendPartial ? ['半截回答'] : isEmpty);
+              }
+            },
+          );
+        },
+      );
+    }
+  }
+
   test('streaming falls back to one chunk when the server returns plain JSON',
       () async {
     await withServer(

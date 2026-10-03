@@ -346,6 +346,11 @@ class DirectLlmAssistantProvider
     try {
       final data = jsonDecode(payload);
       if (data is! Map<String, dynamic>) return null;
+      // HTTP 200 的 SSE 也可能通过 error 事件报告失败。不能把它当作空增量
+      // 忽略，否则已经收到的半截文字会被保存成成功回答；不回显上游内容。
+      if (data['error'] != null) {
+        throw const AssistantException('模型服务中途出错，回答未完成，请重试。');
+      }
       final choices = data['choices'];
       if (choices is! List || choices.isEmpty || choices.first is! Map) {
         return null;
@@ -354,7 +359,7 @@ class DirectLlmAssistantProvider
       if (delta is! Map) return null;
       final content = delta['content'];
       return content is String ? content : null;
-    } catch (_) {
+    } on FormatException {
       return null;
     }
   }
