@@ -294,51 +294,72 @@ void main() {
     );
   });
 
-  test('取消订阅会掐断连接，服务端不再继续写', () async {
-    final aborted = Completer<void>();
-    void signalAbort() {
-      if (!aborted.isCompleted) aborted.complete();
+  test('取消订阅会掐断连接，服务端立刻看到连接断开', () async {
+    final disconnected = Completer<void>();
+    void signalDisconnect() {
+      if (!disconnected.isCompleted) disconnected.complete();
     }
 
-    await withServer(
-      (request) async {
-        request.response.headers.contentType = ContentType(
-          'text',
-          'event-stream',
-          charset: 'utf-8',
-        );
-        request.response.write('data: {"choices":[{"delta":{"content":"第一块"}}]}\n\n');
-        await request.response.flush();
-        // 客户端取消后连接会断。两个信号任取其一即可：`done` 以错误结束，
-        // 或后续写入抛错——这就是「请求真的停了」在服务端的证据。
-        unawaited(
-          request.response.done.then(
-            (_) => signalAbort(),
-            onError: (_) => signalAbort(),
-          ),
-        );
-        try {
-          for (var i = 0; i < 200; i++) {
-            await Future<void>.delayed(const Duration(milliseconds: 50));
-            request.response.write(
-              'data: {"choices":[{"delta":{"content":"继续"}}]}\n\n',
-            );
-            await request.response.flush();
+    // 这条**故意不用 HttpServer**。客户端断连之后，服务端的 `HttpResponse`
+    // 是察觉不到的：`flush()` 在没有待刷数据时是个空操作（`_StreamSinkImpl.flush`
+    // 在 `_controllerInstance == null` 时直接 `return Future.value(this)`），
+    // 而 `done` 要等 `close()` 才完成——而循环里从来不会 close。于是「服务端还在
+    // 不在写」在 HttpServer 这一层根本观察不到，那种写法只会一直等到超时，客户端
+    // 怎么改都过不了。
+    //
+    // 所以这里直接架一个裸 Socket 手写 SSE 响应：客户端一销毁连接，服务端这侧
+    // 的读取立刻拿到 EOF（`onDone`）或错误，这是内核给的信号，绕不过去。
+    final server = await ServerSocket.bind(InternetAddress.loopbackIPv4, 0);
+    server.listen((socket) {
+      socket.listen(
+        (_) {}, // 请求体不关心，但必须一直读着，否则收不到对端的 FIN。
+        onDone: signalDisconnect,
+        onError: (Object _) => signalDisconnect(),
+      );
+      socket.write(
+        'HTTP/1.1 200 OK\r\n'
+        'Content-Type: text/event-stream\r\n'
+        'Transfer-Encoding: chunked\r\n'
+        '\r\n',
+      );
+      void frame(String text) {
+        final bytes = utf8.encode(text);
+        socket.add(utf8.encode('${bytes.length.toRadixString(16)}\r\n'));
+        socket.add(bytes);
+        socket.add(const [0x0d, 0x0a]);
+      }
+
+      frame('data: {"choices":[{"delta":{"content":"第一块"}}]}\n\n');
+      unawaited(() async {
+        while (!disconnected.isCompleted) {
+          await Future<void>.delayed(const Duration(milliseconds: 50));
+          try {
+            frame('data: {"choices":[{"delta":{"content":"继续"}}]}\n\n');
+            await socket.flush();
+          } catch (_) {
+            signalDisconnect();
+            return;
           }
-        } catch (_) {
-          signalAbort();
         }
-      },
-      (baseUrl) async {
-        final subscription = providerFor(baseUrl)
+      }());
+    });
+
+    try {
+      await HttpOverrides.runWithHttpOverrides(() async {
+        final subscription = providerFor('http://127.0.0.1:${server.port}/v1')
             .replyStream(question: '最近怎么样？', context: context)
             .listen((_) {});
+        // 第一块到了就说明连接是活的——取消之前得先确认这一点，否则这条测试
+        // 什么也没证明。
         await Future<void>.delayed(const Duration(milliseconds: 200));
+        expect(disconnected.isCompleted, isFalse);
         await subscription.cancel();
-        // 取消没生效的话，只有等上面那 10 秒循环跑完才会 complete——超时即失败。
-        await aborted.future.timeout(const Duration(seconds: 5));
-      },
-    );
+        // 取消没生效的话，连接会被服务端一直喂到测试结束——超时即失败。
+        await disconnected.future.timeout(const Duration(seconds: 5));
+      }, _LoopbackHttpOverrides());
+    } finally {
+      await server.close();
+    }
   });
 
   test('streaming falls back to one chunk when the server returns plain JSON',
