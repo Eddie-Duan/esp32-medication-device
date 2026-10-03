@@ -125,16 +125,10 @@ class DirectLlmAssistantProvider
     final client = HttpClient()..connectionTimeout = timeout;
     // 订阅被取消（用户点「取消」/「清空对话」，或离开页面）时立刻掐断连接。
     // 不这样做的话请求会继续跑到底——用户以为停了，token 其实还在烧。
-    //
-    // 只 `client.close(force: true)` 掐不断**已经在途的**那条请求：客户端对象
-    // 关掉了，连接上的响应还在继续流，服务端照写不误（集成测试里表现为「取消后
-    // 服务端又写了十秒才超时」）。要真停，得对在途请求本身 `abort()`。
     var aborted = false;
-    HttpClientRequest? inFlight;
     final controller = StreamController<String>(
       onCancel: () {
         aborted = true;
-        inFlight?.abort();
         client.close(force: true);
       },
     );
@@ -148,23 +142,12 @@ class DirectLlmAssistantProvider
     // 异步体里逐块推进。
     () async {
       try {
-        final request = await _openStreamRequest(
+        await for (final chunk in _requestStream(
           client,
           trimmed,
           context,
           references,
           history,
-        );
-        inFlight = request;
-        // 取消赶在请求发出之前时，onCancel 里还拿不到 request（那时只能关客户端），
-        // 所以这里补一次 abort 才算真的停掉。
-        if (aborted) {
-          request.abort();
-          return;
-        }
-        final response = await request.close();
-        await for (final chunk in _readStreamResponse(
-          response,
           completion,
         ).timeout(timeout)) {
           if (!aborted && !controller.isClosed) controller.add(chunk);
@@ -254,17 +237,16 @@ class DirectLlmAssistantProvider
     return _extractAnswer(jsonDecode(utf8.decode(bytes)));
   }
 
-  /// 打开流式请求（`stream: true`）并把请求对象交回调用方。
-  ///
-  /// **不在这里读响应**：`replyStream` 要留着这个对象，取消订阅时对它 `abort()`
-  /// 才能掐断在途请求（见那边的注释）。
-  Future<HttpClientRequest> _openStreamRequest(
+  /// 流式请求：`stream: true`。服务端返回 SSE（`text/event-stream`）时逐块解析；
+  /// 少数服务端不支持流式、直接回了整段 JSON，这里兜底按单次回答返回。
+  Stream<String> _requestStream(
     HttpClient client,
     String question,
     AssistantContext context,
     List<String> references,
     List<ChatTurn> history,
-  ) async {
+    StreamCompletion? completion,
+  ) async* {
     final request = await client.postUrl(endpoint);
     request.followRedirects = false;
     request.headers.contentType = ContentType.json;
@@ -274,15 +256,7 @@ class DirectLlmAssistantProvider
         _body(question, context, references, history, stream: true),
       ),
     );
-    return request;
-  }
-
-  /// 读流式响应：服务端返回 SSE（`text/event-stream`）时逐块解析；少数服务端
-  /// 不支持流式、直接回了整段 JSON，这里兜底按单次回答返回。
-  Stream<String> _readStreamResponse(
-    HttpClientResponse response,
-    StreamCompletion? completion,
-  ) async* {
+    final response = await request.close();
     if (response.statusCode != HttpStatus.ok) {
       throw AssistantException(_statusMessage(response.statusCode));
     }
