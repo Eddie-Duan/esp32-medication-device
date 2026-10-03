@@ -149,12 +149,102 @@ class _StreamingProvider implements StreamingAssistantProvider {
     required AssistantContext context,
     List<String> references = const [],
     List<ChatTurn> history = const [],
+    StreamCompletion? completion,
   }) async* {
     lastHistory = List.of(history);
     for (final chunk in chunks) {
       if (gap > Duration.zero) await Future<void>.delayed(gap);
       yield chunk;
     }
+  }
+}
+
+/// 第一次流式请求失败、之后成功：用来验证失败气泡不会被回灌进多轮上下文。
+class _FailOnceStreamProvider implements StreamingAssistantProvider {
+  int calls = 0;
+  List<ChatTurn> lastHistory = const [];
+
+  @override
+  Future<String> reply({
+    required String question,
+    required AssistantContext context,
+    List<String> references = const [],
+  }) async => '今天使用 2 次。';
+
+  @override
+  Stream<String> replyStream({
+    required String question,
+    required AssistantContext context,
+    List<String> references = const [],
+    List<ChatTurn> history = const [],
+    StreamCompletion? completion,
+  }) async* {
+    calls++;
+    lastHistory = List.of(history);
+    if (calls == 1) {
+      throw const AssistantException('模型服务响应超时，请稍后重试或切回本地规则。');
+    }
+    yield '今天使用 2 次。';
+  }
+}
+
+/// 由测试自己推的在线 provider：吐一块、停住，专门用来观察取消有没有真的传下去。
+///
+/// 用 `StreamController` 而不是 `async*`：`async*` 被取消时，那个还没到点的
+/// `Future.delayed` 计时器会一直挂着，widget 测试结束时框架会报
+/// 「A Timer is still pending」。这里完全不挂计时器，取消与否由 [cancelled] 直接反映。
+class _ManualStreamProvider implements StreamingAssistantProvider {
+  StreamController<String>? _controller;
+
+  /// 订阅被取消过。`StreamController.onCancel` 只在订阅被取消时触发。
+  bool cancelled = false;
+
+  /// 推一块内容给页面（订阅还没建立时丢弃）。
+  void emit(String chunk) => _controller?.add(chunk);
+
+  @override
+  Future<String> reply({
+    required String question,
+    required AssistantContext context,
+    List<String> references = const [],
+  }) async => '';
+
+  @override
+  Stream<String> replyStream({
+    required String question,
+    required AssistantContext context,
+    List<String> references = const [],
+    List<ChatTurn> history = const [],
+    StreamCompletion? completion,
+  }) {
+    final controller = StreamController<String>(
+      onCancel: () => cancelled = true,
+    );
+    _controller = controller;
+    return controller.stream;
+  }
+}
+
+/// 服务端不发结束标记就断流的在线 provider：回答要保留，只在末尾提示「可能不完整」。
+class _IncompleteStreamProvider implements StreamingAssistantProvider {
+  @override
+  Future<String> reply({
+    required String question,
+    required AssistantContext context,
+    List<String> references = const [],
+  }) async => '今天使用 2 次。';
+
+  @override
+  Stream<String> replyStream({
+    required String question,
+    required AssistantContext context,
+    List<String> references = const [],
+    List<ChatTurn> history = const [],
+    StreamCompletion? completion,
+  }) async* {
+    yield '今天使用 2 次。';
+    // 模拟流正常关闭、但没收到 `data: [DONE]`。
+    if (completion != null) completion.isComplete = false;
   }
 }
 
@@ -209,6 +299,7 @@ class _FailMidStreamProvider implements StreamingAssistantProvider {
     required AssistantContext context,
     List<String> references = const [],
     List<ChatTurn> history = const [],
+    StreamCompletion? completion,
   }) async* {
     yield '半截回答内容';
     throw const AssistantException('模型回答中途中断，回答未完成，请重试。');
@@ -913,5 +1004,115 @@ void main() {
     expect(find.text('上次回答失败，点这里重试'), findsOneWidget);
     // 半截回答没有落成一条正常回答。
     expect(find.textContaining('半截回答内容'), findsNothing);
+  });
+
+  testWidgets('点「停止」会真的取消订阅，而不是等下一个 chunk 才发现', (tester) async {
+    final provider = _ManualStreamProvider();
+    await _pump(
+      tester,
+      service: AssistantService(provider: provider, isRemote: true),
+      size: const Size(420, 1400),
+    );
+    await tester.enterText(find.byType(TextField), '最近怎么样');
+    await tester.tap(find.widgetWithIcon(IconButton, Icons.send));
+    await tester.pump();
+    await tester.pump();
+    provider.emit('近 7 天共 ');
+    await tester.pump();
+    // 先证明订阅确实建好了、事件收得到，否则「没取消」这个断言毫无意义。
+    expect(find.textContaining('近 7 天共'), findsOneWidget);
+    expect(find.text('停止'), findsOneWidget);
+    expect(provider.cancelled, isFalse);
+
+    await tester.tap(find.text('停止'));
+    await tester.pump();
+    await tester.pump();
+    // 订阅已经取消：底层请求据此掐断，模型不会继续生成、继续计费。
+    expect(provider.cancelled, isTrue);
+  });
+
+  testWidgets('清空对话也会取消订阅，在跑的请求不再继续', (tester) async {
+    final provider = _ManualStreamProvider();
+    await _pump(
+      tester,
+      service: AssistantService(provider: provider, isRemote: true),
+      size: const Size(420, 1400),
+    );
+    await tester.enterText(find.byType(TextField), '最近怎么样');
+    await tester.tap(find.widgetWithIcon(IconButton, Icons.send));
+    await tester.pump();
+    await tester.pump();
+    provider.emit('近 7 天共 ');
+    await tester.pump();
+    expect(find.textContaining('近 7 天共'), findsOneWidget);
+
+    // 流还在，先取消订阅才叫「停下来」；用显式时长推进菜单/对话框动画，
+    // 不能用 pumpAndSettle——它会一直推着思考气泡里的转圈动画往前走。
+    Future<void> advanceOverlays() async {
+      await tester.pump();
+      await tester.pump(const Duration(milliseconds: 500));
+    }
+
+    await tester.tap(find.byTooltip('更多'));
+    await advanceOverlays();
+    await tester.tap(find.text('清空对话'));
+    await advanceOverlays();
+    await tester.tap(find.text('清空'));
+    await advanceOverlays();
+
+    expect(provider.cancelled, isTrue);
+  });
+
+  testWidgets('流没收结束标记：回答照给，末尾提示可能不完整', (tester) async {
+    await _pump(
+      tester,
+      service: AssistantService(
+        provider: _IncompleteStreamProvider(),
+        isRemote: true,
+      ),
+      size: const Size(420, 1400),
+    );
+    await tester.enterText(find.byType(TextField), '今天用了几次？');
+    await tester.tap(find.widgetWithIcon(IconButton, Icons.send));
+    await tester.pumpAndSettle();
+
+    // 不发 [DONE] 的服务端不算少见，内容往往是全的：不丢回答。
+    expect(find.textContaining('今天使用 2 次'), findsOneWidget);
+    expect(find.text('在线回答'), findsOneWidget);
+    // 但也没法确认收全了，得如实提醒。
+    expect(find.textContaining('可能不完整'), findsOneWidget);
+    // 提示归提示，重试入口不出现——这次不算失败。
+    expect(find.text('上次回答失败，点这里重试'), findsNothing);
+  });
+
+  testWidgets('失败提示不会被当成历史回灌给模型', (tester) async {
+    final provider = _FailOnceStreamProvider();
+    await _pump(
+      tester,
+      service: AssistantService(provider: provider, isRemote: true),
+      settingsStore: _MemorySettingsStore(
+        const AssistantSettings(sendHistory: true),
+      ),
+      size: const Size(420, 1400),
+    );
+
+    // 第一问失败，留下一条失败气泡。
+    await _ask(tester, '今天用了几次？');
+    expect(provider.calls, 1);
+    expect(find.textContaining('模型服务响应超时'), findsOneWidget);
+
+    // 第二问带上本轮对话，失败气泡不能被当成「助手说过的话」发出去。
+    await _ask(tester, '那昨天呢？');
+    expect(provider.calls, 2);
+    expect(provider.lastHistory, isNotEmpty);
+    expect(
+      provider.lastHistory.every((turn) => !turn.text.contains('超时')),
+      isTrue,
+      reason: '失败提示是 App 写的，不是模型的回答，不该进多轮上下文',
+    );
+    expect(
+      provider.lastHistory.any((turn) => turn.text.contains('今天用了几次')),
+      isTrue,
+    );
   });
 }

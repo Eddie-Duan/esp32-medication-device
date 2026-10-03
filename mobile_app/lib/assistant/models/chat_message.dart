@@ -25,6 +25,7 @@ class ChatMessage {
     required this.createdAt,
     this.source,
     this.feedback = ChatFeedback.none,
+    this.isError = false,
   });
 
   final ChatRole role;
@@ -36,6 +37,12 @@ class ChatMessage {
 
   /// 用户对这条回答的赞/踩。会话内有效，不参与序列化。
   final ChatFeedback feedback;
+
+  /// 这条是 App 写的失败提示，不是模型的回答（「模型服务响应超时」之类）。
+  ///
+  /// 界面上仍按助手气泡显示，但**不能被当成历史回灌给模型**——否则模型会看到
+  /// 自己上一条失败提示，当成已经答过的内容（见 `AssistantService._toTurns`）。
+  final bool isError;
 
   bool get isUser => role == ChatRole.user;
 
@@ -49,6 +56,7 @@ class ChatMessage {
     createdAt: createdAt,
     source: source,
     feedback: feedback ?? this.feedback,
+    isError: isError,
   );
 
   Map<String, dynamic> toJson() => {
@@ -56,6 +64,8 @@ class ChatMessage {
     'text': text,
     'created_at': createdAt.toIso8601String(),
     'source': source?.name,
+    // 只在失败提示上写，正常回答不带这个字段，存档保持紧凑。
+    if (isError) 'error': true,
   };
 
   /// 解析一条存档消息；认不出来就返回 null，由调用方跳过。
@@ -86,6 +96,8 @@ class ChatMessage {
         'knowledge' => ChatSource.knowledge,
         _ => null,
       },
+      // 老存档没有这个字段，认不出就是正常回答。
+      isError: data['error'] == true,
     );
   }
 }

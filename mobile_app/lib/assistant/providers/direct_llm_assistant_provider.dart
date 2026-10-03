@@ -114,6 +114,7 @@ class DirectLlmAssistantProvider
     required AssistantContext context,
     List<String> references = const [],
     List<ChatTurn> history = const [],
+    StreamCompletion? completion,
   }) {
     final trimmed = question.trim();
     if (trimmed.isEmpty || trimmed.length > maxQuestionLength) {
@@ -122,9 +123,23 @@ class DirectLlmAssistantProvider
       );
     }
     final client = HttpClient()..connectionTimeout = timeout;
-    final controller = StreamController<String>();
-    // 异步体里逐块推进，出错时把同样的固定文案经 addError 传给监听方；
-    // 所有失败分支都一样：绝不回显 Key 或上游响应体。
+    // 订阅被取消（用户点「取消」/「清空对话」，或离开页面）时立刻掐断连接。
+    // 不这样做的话请求会继续跑到底——用户以为停了，token 其实还在烧。
+    var aborted = false;
+    final controller = StreamController<String>(
+      onCancel: () {
+        aborted = true;
+        client.close(force: true);
+      },
+    );
+    // 所有失败分支都长一个样：固定文案经 addError 传给监听方，绝不回显 Key
+    // 或上游响应体。已取消的订阅不再收事件（Dart 会直接丢弃），这里也显式跳过。
+    Future<void> emitError(AssistantException error) async {
+      if (!aborted && !controller.isClosed) controller.addError(error);
+      if (!controller.isClosed) await controller.close();
+    }
+
+    // 异步体里逐块推进。
     () async {
       try {
         await for (final chunk in _requestStream(
@@ -133,44 +148,28 @@ class DirectLlmAssistantProvider
           context,
           references,
           history,
+          completion,
         ).timeout(timeout)) {
-          if (!controller.isClosed) controller.add(chunk);
+          if (!aborted && !controller.isClosed) controller.add(chunk);
         }
-        await controller.close();
+        if (!controller.isClosed) await controller.close();
       } on AssistantException catch (error) {
-        if (!controller.isClosed) controller.addError(error);
-        await controller.close();
+        await emitError(error);
       } on TimeoutException {
-        if (!controller.isClosed) {
-          controller.addError(
-            const AssistantException('模型服务响应超时，请稍后重试或切回本地规则。'),
-          );
-        }
-        await controller.close();
+        await emitError(
+          const AssistantException('模型服务响应超时，请稍后重试或切回本地规则。'),
+        );
       } on SocketException {
-        if (!controller.isClosed) {
-          controller.addError(
-            const AssistantException('无法连接模型服务，请检查地址和网络。'),
-          );
-        }
-        await controller.close();
+        await emitError(const AssistantException('无法连接模型服务，请检查地址和网络。'));
       } on HandshakeException {
-        if (!controller.isClosed) {
-          controller.addError(
-            const AssistantException('模型服务证书验证失败，请检查服务地址。'),
-          );
-        }
-        await controller.close();
+        await emitError(const AssistantException('模型服务证书验证失败，请检查服务地址。'));
       } on FormatException {
-        if (!controller.isClosed) {
-          controller.addError(const AssistantException('模型服务返回格式不正确。'));
-        }
-        await controller.close();
+        await emitError(const AssistantException('模型服务返回格式不正确。'));
       } on HttpException {
-        if (!controller.isClosed) {
-          controller.addError(const AssistantException('模型服务连接中断，请重试。'));
-        }
-        await controller.close();
+        await emitError(const AssistantException('模型服务连接中断，请重试。'));
+      } on StateError {
+        // 自己关掉连接后（取消）继续读流会抛这个：连接没了，不是上游的问题。
+        await emitError(const AssistantException('模型服务连接中断，请重试。'));
       } finally {
         client.close(force: true);
       }
@@ -246,6 +245,7 @@ class DirectLlmAssistantProvider
     AssistantContext context,
     List<String> references,
     List<ChatTurn> history,
+    StreamCompletion? completion,
   ) async* {
     final request = await client.postUrl(endpoint);
     request.followRedirects = false;
@@ -264,7 +264,7 @@ class DirectLlmAssistantProvider
     if (contentType == 'text/event-stream' ||
         contentType == 'application/x-ndjson' ||
         contentType.contains('event-stream')) {
-      yield* _parseSse(response);
+      yield* _parseSse(response, completion);
       return;
     }
     // 不支持流式：整段 JSON 兜底。
@@ -283,9 +283,14 @@ class DirectLlmAssistantProvider
   /// 按字节切行（换行符是 ASCII 0x0A），只对完整的一行做 UTF-8 解码，
   /// 这样 chunk 边界把某个中文多字节字符切两半也不会出乱码。
   ///
-  /// 服务端正常结束会发 `data: [DONE]`。若流在没收到它之前就断了，说明只拿到
-  /// 半截回答——这里把它当失败抛出去，不让调用方把半截文字当完整回答保存。
-  Stream<String> _parseSse(HttpClientResponse response) async* {
+  /// 服务端正常结束会发 `data: [DONE]`。没收到它流就断了，有两种可能：服务端
+  /// 中途挂了（只拿到半截），或者这个服务端本来就不发 `[DONE]`、内容其实是完整的。
+  /// 两者在协议上分不出来，所以**不丢已收到的文字**，只把「没确认收完」记进
+  /// [completion]，由页面在回答末尾提醒用户核对；真正连不上的错误仍由异常处理。
+  Stream<String> _parseSse(
+    HttpClientResponse response,
+    StreamCompletion? completion,
+  ) async* {
     var buffer = <int>[];
     var total = 0;
     var sawDone = false;
@@ -320,8 +325,8 @@ class DirectLlmAssistantProvider
         if (content != null && content.isNotEmpty) yield content;
       }
     }
-    if (!sawDone) {
-      throw const AssistantException('模型回答中途中断，回答未完成，请重试。');
+    if (!sawDone && completion != null) {
+      completion.isComplete = false;
     }
   }
 

@@ -4,6 +4,7 @@ import 'dart:io';
 
 import 'package:flutter_test/flutter_test.dart';
 import 'package:medication_device_app/assistant/assistant_exception.dart';
+import 'package:medication_device_app/assistant/assistant_provider.dart';
 import 'package:medication_device_app/assistant/models/assistant_context.dart';
 import 'package:medication_device_app/assistant/providers/direct_llm_assistant_provider.dart';
 
@@ -236,7 +237,7 @@ void main() {
     );
   });
 
-  test('SSE 流没收到 [DONE] 就结束，视为回答未完成并报错', () async {
+  test('SSE 流没收到 [DONE]：留着已收到的内容，只标记「没确认收完」', () async {
     await withServer(
       (request) async {
         request.response.headers.contentType = ContentType(
@@ -250,18 +251,92 @@ void main() {
         await request.response.close();
       },
       (baseUrl) async {
-        await expectLater(
-          providerFor(baseUrl)
-              .replyStream(question: '最近怎么样？', context: context)
-              .toList(),
-          throwsA(
-            isA<AssistantException>().having(
-              (error) => error.message,
-              'message',
-              contains('回答未完成'),
-            ),
+        // 不发 [DONE] 的服务端不少见，内容往往是完整的，所以不丢回答……
+        final completion = StreamCompletion();
+        final chunks = await providerFor(baseUrl)
+            .replyStream(
+              question: '最近怎么样？',
+              context: context,
+              completion: completion,
+            )
+            .toList();
+        expect(chunks, ['半截回答']);
+        // ……但也没法确认收全，要用这个标记告诉页面补提醒。
+        expect(completion.isComplete, isFalse);
+      },
+    );
+  });
+
+  test('收到 [DONE] 的回答标记为已收完', () async {
+    await withServer(
+      (request) async {
+        request.response.headers.contentType = ContentType(
+          'text',
+          'event-stream',
+          charset: 'utf-8',
+        );
+        request.response.write('data: {"choices":[{"delta":{"content":"完整"}}]}\n\n');
+        request.response.write('data: [DONE]\n\n');
+        await request.response.close();
+      },
+      (baseUrl) async {
+        final completion = StreamCompletion();
+        final chunks = await providerFor(baseUrl)
+            .replyStream(
+              question: '最近怎么样？',
+              context: context,
+              completion: completion,
+            )
+            .toList();
+        expect(chunks, ['完整']);
+        expect(completion.isComplete, isTrue);
+      },
+    );
+  });
+
+  test('取消订阅会掐断连接，服务端不再继续写', () async {
+    final aborted = Completer<void>();
+    void signalAbort() {
+      if (!aborted.isCompleted) aborted.complete();
+    }
+
+    await withServer(
+      (request) async {
+        request.response.headers.contentType = ContentType(
+          'text',
+          'event-stream',
+          charset: 'utf-8',
+        );
+        request.response.write('data: {"choices":[{"delta":{"content":"第一块"}}]}\n\n');
+        await request.response.flush();
+        // 客户端取消后连接会断。两个信号任取其一即可：`done` 以错误结束，
+        // 或后续写入抛错——这就是「请求真的停了」在服务端的证据。
+        unawaited(
+          request.response.done.then(
+            (_) => signalAbort(),
+            onError: (_) => signalAbort(),
           ),
         );
+        try {
+          for (var i = 0; i < 200; i++) {
+            await Future<void>.delayed(const Duration(milliseconds: 50));
+            request.response.write(
+              'data: {"choices":[{"delta":{"content":"继续"}}]}\n\n',
+            );
+            await request.response.flush();
+          }
+        } catch (_) {
+          signalAbort();
+        }
+      },
+      (baseUrl) async {
+        final subscription = providerFor(baseUrl)
+            .replyStream(question: '最近怎么样？', context: context)
+            .listen((_) {});
+        await Future<void>.delayed(const Duration(milliseconds: 200));
+        await subscription.cancel();
+        // 取消没生效的话，只有等上面那 10 秒循环跑完才会 complete——超时即失败。
+        await aborted.future.timeout(const Duration(seconds: 5));
       },
     );
   });

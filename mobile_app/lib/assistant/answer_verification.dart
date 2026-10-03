@@ -16,6 +16,12 @@ final RegExp _sourceMarker = RegExp(
 const remoteKnowledgeNote =
     '（以下是 AI 的通用健康知识，不是你的设备记录；涉及健康决策请以医生意见为准。）';
 
+/// 流没收结束标记就断了，回答末尾补的说明。
+///
+/// 不发 `[DONE]`、直接关连接的服务端不算少见，内容往往其实是完整的，所以**不丢
+/// 回答**；但也无法据此确认收全了，得如实提醒一句，别让用户把半截当成完整结果。
+const remoteIncompleteNote = '（这次回答没有收到结束标记，可能不完整，请核对后再采用。）';
+
 /// 拆掉来源标记之后的回答。
 class ParsedRemoteAnswer {
   const ParsedRemoteAnswer(this.body, {this.isKnowledge = false});

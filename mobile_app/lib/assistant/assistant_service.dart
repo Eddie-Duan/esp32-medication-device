@@ -59,6 +59,7 @@ class AssistantService {
     List<String> references,
     Set<int> referenceNumbers,
     Stream<String> stream,
+    StreamCompletion completion,
   }) streamAsk({
     required String question,
     required AssistantContext context,
@@ -68,14 +69,18 @@ class AssistantService {
     final references = [for (final chunk in chunks) chunk.toReference()];
     final referenceNumbers = _referenceNumbers(chunks);
     final provider = _provider as StreamingAssistantProvider;
+    // 由 provider 填写：没收到结束哨兵时置为「未确认收完」，页面据此在回答末尾补提醒。
+    final completion = StreamCompletion();
     return (
       references: references,
       referenceNumbers: referenceNumbers,
+      completion: completion,
       stream: provider.replyStream(
         question: question,
         context: context,
         references: references,
         history: _toTurns(history, question: question),
+        completion: completion,
       ),
     );
   }
@@ -84,12 +89,14 @@ class AssistantService {
   /// 裁剪（见 `history_relevance.dart`），供直连模型多轮上下文用。
   ///
   /// 来源标记在落盘前已拆掉，这里再拆一次是防老存档里还带着标记。
+  /// **失败气泡要滤掉**：那是 App 写的提示、不是模型说过的话，回灌过去会让模型
+  /// 把自己上一条「模型服务响应超时」当成已经答过的内容。
   List<ChatTurn> _toTurns(List<ChatMessage> history, {required String question}) {
     final turns = <ChatTurn>[];
     for (final message in history) {
       if (message.isUser) {
         turns.add((role: 'user', text: message.text));
-      } else if (message.role == ChatRole.assistant) {
+      } else if (message.role == ChatRole.assistant && !message.isError) {
         turns.add((role: 'assistant', text: parseRemoteAnswer(message.text).body));
       }
     }
@@ -99,12 +106,18 @@ class AssistantService {
   /// 在线回答落定：拆来源标记、补「不是设备记录」说明、做数字回验。
   ///
   /// 流式和非流式两条路径共用这一步，保证两边的回答长得一模一样。
+  ///
+  /// [incomplete] 为 true 时（流没收结束标记就断了）在末尾补一句提醒——回答照给，
+  /// 但要让用户知道这次没确认收完。
   ChatMessage finalizeRemote(
     String raw,
     AssistantContext context, {
     Set<int> extra = const {},
+    bool incomplete = false,
   }) {
     final parsed = parseRemoteAnswer(raw);
+    // 没确认收完就补一句提醒；回答本身照给。
+    final tail = incomplete ? '\n\n$remoteIncompleteNote' : '';
     if (parsed.isKnowledge) {
       // 通用知识回答不参与数字回验：里面的数字（例如「全球约 3 亿人」）本来就不
       // 来自摘要，拿摘要去比对只会把正常回答误判成编造，还得跟一句莫名其妙的提醒。
@@ -112,7 +125,7 @@ class AssistantService {
         role: ChatRole.assistant,
         // 声明放在最前面、浅色斜体渲染（见 answer_styling.dart），让用户先看到
         // 「这不是你的设备记录」，再读正文。
-        text: '$remoteKnowledgeNote\n\n${parsed.body}',
+        text: '$remoteKnowledgeNote\n\n${parsed.body}$tail',
         createdAt: DateTime.now(),
         source: ChatSource.knowledge,
       );
@@ -125,7 +138,7 @@ class AssistantService {
         context,
         now: _now,
         extra: extra,
-      ),
+      ) + tail,
       createdAt: DateTime.now(),
       source: ChatSource.online,
     );

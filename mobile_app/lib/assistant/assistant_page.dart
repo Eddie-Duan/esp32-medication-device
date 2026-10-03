@@ -103,6 +103,12 @@ class _AssistantPageState extends State<AssistantPage> {
   /// 切回本地或重建服务（见 [_reconcileAfterConsole]）。
   String? _onlineProfileId;
 
+  /// 中止当前流式订阅的入口，流结束后置空。
+  ///
+  /// 光把 [_requestGeneration] 加一只能让迟到的结果作废，请求本身还在跑；调用这个
+  /// 才会真的取消订阅、进而掐断底层连接（见 `StreamingAssistantProvider` 的约定）。
+  Future<void> Function()? _abortStream;
+
   @override
   void initState() {
     super.initState();
@@ -121,6 +127,8 @@ class _AssistantPageState extends State<AssistantPage> {
 
   @override
   void dispose() {
+    // 离开页面也要停掉在跑的请求，否则它会在后台跑完、白花钱。
+    unawaited(_abortStream?.call() ?? Future<void>.value());
     if (_ownsSpeaker) unawaited(_speaker?.dispose());
     _inputController.dispose();
     _scrollController.dispose();
@@ -358,6 +366,10 @@ class _AssistantPageState extends State<AssistantPage> {
 
   /// 在线流式回答：把逐块文本接进 `_streamText`，流结束后落定成一条消息。
   ///
+  /// 用 `listen` 而不是 `await for`：要把订阅句柄存下来，用户点「取消」/「清空对话」
+  /// 或离开页面时**立刻取消订阅**，底层连接才会真的断掉。`await for` 只能在下一个
+  /// chunk 到达时才发现该退出了，请求卡住时等于没取消。
+  ///
   /// 错误不在这里吞掉，抛给 `_send` 的 catch 统一转成固定文案气泡——这样流式
   /// 与非流式的失败路径长得一模一样，也不会回显 Key 或上游响应体。
   Future<void> _streamAnswer(
@@ -376,21 +388,45 @@ class _AssistantPageState extends State<AssistantPage> {
       _streamText = '';
     });
     final buffer = StringBuffer();
-    await for (final chunk in result.stream) {
-      buffer.write(chunk);
-      if (!mounted || generation != _requestGeneration) return;
-      setState(() => _streamText = buffer.toString());
-      _jumpToBottom();
+    // 手动 complete：订阅被取消时 onDone/onError 都不会再触发，等待方要能自己醒过来。
+    final finished = Completer<void>();
+    late final StreamSubscription<String> subscription;
+    subscription = result.stream.listen(
+      (chunk) {
+        buffer.write(chunk);
+        if (!mounted || generation != _requestGeneration) return;
+        setState(() => _streamText = buffer.toString());
+        _jumpToBottom();
+      },
+      onError: (Object error) {
+        if (!finished.isCompleted) finished.completeError(error);
+      },
+      onDone: () {
+        if (!finished.isCompleted) finished.complete();
+      },
+      cancelOnError: true,
+    );
+    _abortStream = () async {
+      await subscription.cancel();
+      if (!finished.isCompleted) finished.complete();
+    };
+    try {
+      await finished.future;
+    } finally {
+      _abortStream = null;
     }
+    // 取消/清空/离开后迟到的流：丢弃，不再落定成回答。
+    if (!mounted || generation != _requestGeneration) return;
     final raw = buffer.toString().trim();
     if (raw.isEmpty) {
       throw const AssistantException('模型服务没有返回文字。');
     }
-    if (!mounted || generation != _requestGeneration) return;
     final message = _service.finalizeRemote(
       raw,
       latestContext,
       extra: result.referenceNumbers,
+      // 服务端没发结束标记：回答照给，末尾补一句「可能不完整」。
+      incomplete: !result.completion.isComplete,
     );
     setState(() {
       _messages.add(message);
@@ -402,6 +438,8 @@ class _AssistantPageState extends State<AssistantPage> {
   }
 
   /// 失败气泡：来源按提问那一刻的上游标，文案固定、不回显任何上游内容。
+  ///
+  /// 标 `isError`：这不是模型说的话，多轮上下文不该把它回灌给模型。
   ChatMessage _errorMessage(Object error, {required bool wasRemote}) =>
       ChatMessage(
         role: ChatRole.assistant,
@@ -410,6 +448,7 @@ class _AssistantPageState extends State<AssistantPage> {
             : '暂时无法读取记录或获取回答，请稍后重试。',
         createdAt: DateTime.now(),
         source: wasRemote ? ChatSource.online : ChatSource.local,
+        isError: true,
       );
 
   /// 切换上游。回本地是一步；切在线时如果已经配置过 API 也是一步。
@@ -525,13 +564,14 @@ class _AssistantPageState extends State<AssistantPage> {
     _scrollToBottom();
   }
 
-  /// 取消进行中的提问：让迟到的结果失效，界面立刻停止等待。
+  /// 取消进行中的提问：丢弃这次结果，并**真的中断**底层请求。
   ///
-  /// 不会真的中断底层网络请求（那需要拿到底层句柄），只是让这次请求的结果被丢弃，
-  /// 用户这边马上能继续打字或切模式。
+  /// 两件事缺一不可：加代次让迟到的回答/错误作废；取消订阅让请求停下来，
+  /// 否则模型还在生成、token 还在烧，用户却以为已经取消了。
   void _cancelPending() {
     if (!_sending) return;
     _requestGeneration++;
+    unawaited(_abortStream?.call() ?? Future<void>.value());
     setState(() {
       _sending = false;
       _streaming = false;
@@ -567,6 +607,8 @@ class _AssistantPageState extends State<AssistantPage> {
     // 「清掉旧问题的重试入口、朗读」也在这里一起做。
     _requestGeneration++;
     _failedQuestion = null;
+    // 光作废结果不够：要取消订阅，请求才真的停下。
+    await _abortStream?.call();
     await _stopSpeaking();
     await _chatStore.clear();
     if (!mounted) return;
